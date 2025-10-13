@@ -1,0 +1,14 @@
+[package]
+name = "vice-snapshot-to-prg-converter"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fltk = { version = "1.4", features = ["fltk-bundled"] }
+
+[profile.release]
+opt-level = 3
+debug = false
+strip = true
+lto = true
+

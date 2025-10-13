@@ -1,0 +1,68 @@
+# ---- Rust ----
+/target
+**/*.rs.bk
+
+# Cargo lockfile for libraries
+# (keep if publishing a binary crate, ignore if it's a pure library)
+# Uncomment next line if you don't want Cargo.lock for libraries:
+# Cargo.lock
+
+# ---- JetBrains RustRover / IntelliJ ----
+.idea/
+*.iml
+out/
+
+# ---- VS Code ----
+.vscode/
+.history/
+
+# ---- Sublime Text ----
+*.sublime-workspace
+*.sublime-project
+
+# ---- Build artifacts ----
+*.bin
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.out
+*.a
+*.lib
+
+# ---- OS specific ----
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---- Backup / temp files ----
+*~
+*.swp
+*.swo
+*.swn
+*.tmp
+*.bak
+
+# Emacs
+\#*\#
+.\#*
+
+# ---- Windows installer / crash dumps ----
+*.msi
+*.cab
+*.msm
+*.msp
+*.lnk
+*.stackdump
+
+# ---- Ignore lockfile at workspace root ----
+/Cargo.lock
+
+# Qodo editor config
+.qodo/
+
+# test output
+*.prg
