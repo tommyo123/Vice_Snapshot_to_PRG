@@ -74,14 +74,26 @@ The converter scans the entire C64 memory space (`$0200-$FFEF`) looking for sequ
 3. **Compressed data**: LZSA1-compressed segments for different memory regions
 
 The restoration process works in stages:
-1. Main decompressor runs from the PRG load address
-2. Decompresses Color RAM, VIC-II, SID, and zero page data (while I/O is enabled)
+1. BASIC stub at `$0801` executes SYS to `$080D` where main loader begins
+2. Decompresses Color RAM, VIC-II, SID (while I/O is enabled)
 3. Restores CIA1 and CIA2 registers directly
-4. Switches to RAM-only mode (`$01 = $34`)
-5. Copies compressed main RAM data and relocation code to top of memory
-6. Copies final restoration code to page 1 (`$0100-$01FF`)
-7. Jumps to relocated decompressor which decompresses main RAM
-8. Final restoration code restores page 1 and jumps to original execution point
+4. Decompresses zero page (`$02-$F7`)
+5. Switches to RAM-only mode (`$01 = $34`)
+6. Copies compressed main RAM data and relocated decompressor to top of memory, then copies relocated decompressor to `$0100`
+7. Jumps to relocated decompressor which decompresses main RAM (`$0200-$FFEF`), including the preprogrammed final restore code in page 1
+8. Block 9 restoration code executes:
+   - Restores original page 1 (`$0100-$01FF`) from preserved blocks 1-8
+   - Restores vectors (`$FFF0-$FFFF`)
+   - Cleans up temporary blocks
+   - Restores zero page locations (`$F8-$FF`)
+   - Jumps to final restore code (now in restored page 1)
+9. Final restore code executes:
+   - Wipes block 9
+   - Restores CPU port and stack pointer
+   - Re-enables I/O (`$01 = $35`)
+   - Configures VIC IRQ and CIA interrupts
+   - Builds RTI frame on stack with original PC and status
+   - Loads final A, X, Y registers and executes RTI to resume at original PC
 
 ## Dependencies
 
