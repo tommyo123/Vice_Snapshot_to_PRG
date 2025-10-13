@@ -12,6 +12,8 @@ use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::process::Command;
 use crate::config::Config;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 /* ======================= Snapshot structures ======================= */
 
@@ -301,11 +303,16 @@ impl ParseVSF {
     pub fn compress_lzsa(&self, in_path: &str, out_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let lzsa_exe = format!("{}/lzsa.exe", self.config.util_str());
 
-        let output = Command::new(&lzsa_exe)
+        let mut command = Command::new(&lzsa_exe);
+        command
             .arg("-r")
             .arg(in_path)
-            .arg(out_path)
-            .output()?;
+            .arg(out_path);
+
+        #[cfg(windows)]
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+        let output = command.output()?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

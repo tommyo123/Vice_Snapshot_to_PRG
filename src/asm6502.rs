@@ -28,6 +28,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 #[derive(Debug)]
 pub enum AsmError {
     Asm(String),
@@ -72,15 +75,21 @@ impl Assembler6502 {
                 AsmError::Asm(format!("Failed to write source file {:?}: {}", asm_path, e))
             })?;
 
-        // Run VASM
-        let output = Command::new(&exe)
+        // Run VASM with hidden console window on Windows
+        let mut command = Command::new(&exe);
+        command
             .current_dir(&work)
             .arg("-Fbin")
             .arg("-quiet")
             .arg("-chklabels")
             .arg("-o")
             .arg(&out_path)
-            .arg(&asm_path)
+            .arg(&asm_path);
+
+        #[cfg(windows)]
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+        let output = command
             .output()
             .map_err(|e| AsmError::Asm(format!("Failed to execute VASM: {}", e)))?;
 
