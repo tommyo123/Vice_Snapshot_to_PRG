@@ -1,7 +1,9 @@
 [package]
 name = "vice-snapshot-to-prg-converter"
-version = "0.1.0"
+version = "0.9.0"
 edition = "2024"
+authors = ["Tommy Olsen"]
+
 
 [dependencies]
 fltk = { version = "1.4", features = ["fltk-bundled"] }
@@ -11,8 +13,11 @@ opt-level = 3
 debug = false
 strip = true
 lto = true
+codegen-units = 1
 
 [build-dependencies]
 winres = "0.1"
 
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
 

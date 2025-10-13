@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  VICE Snapshot to PRG Converter - WiX Installer Configuration
+
+  This installer creates the following structure:
+  Program Files\vice-snapshot-to-prg-converter\
+  ├── vice-snapshot-to-prg-converter.exe
+  ├── vcruntime140.dll
+  └── util\
+      ├── vasm6502_std.exe
+      ├── lzsa.exe
+      └── LICENSE files
+-->
+
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?else ?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+<?endif ?>
+
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+    <Product
+        Id="*"
+        Name="VICE Snapshot to PRG Converter"
+        UpgradeCode="43A96CCD-119B-4466-AC9A-74BBC3EBF64E"
+        Manufacturer="Tommy Olsen"
+        Language="1033"
+        Codepage="1252"
+        Version="$(var.Version)">
+
+        <Package Id="*"
+            Keywords="Installer"
+            Description="Converts VICE 3.9 x64sc snapshots to self-restoring C64 PRG files"
+            Manufacturer="Tommy Olsen"
+            InstallerVersion="450"
+            Languages="1033"
+            Compressed="yes"
+            InstallScope="perMachine"
+            SummaryCodepage="1252"
+            />
+
+        <MajorUpgrade
+            Schedule="afterInstallInitialize"
+            DowngradeErrorMessage="A newer version of [ProductName] is already installed. Setup will now exit."/>
+
+        <Media Id="1" Cabinet="media1.cab" EmbedCab="yes" DiskPrompt="CD-ROM #1"/>
+        <Property Id="DiskPrompt" Value="VICE Snapshot to PRG Converter Installation"/>
+
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="$(var.PlatformProgramFilesFolder)" Name="PFiles">
+                <Directory Id="APPLICATIONFOLDER" Name="vice-snapshot-to-prg-converter">
+
+                    <!-- Main executable -->
+                    <Component Id="MainExecutable" Guid="*">
+                        <File
+                            Id="MainExe"
+                            Name="vice-snapshot-to-prg-converter.exe"
+                            DiskId="1"
+                            Source="$(var.CargoTargetBinDir)\vice-snapshot-to-prg-converter.exe"
+                            KeyPath="yes"/>
+                    </Component>
+
+                    <!-- VC++ Runtime DLL -->
+                    <Component Id="VCRuntime" Guid="*">
+                        <File
+                            Id="VCRuntime140"
+                            Name="vcruntime140.dll"
+                            DiskId="1"
+                            Source="external-utils\vcruntime140.dll"
+                            KeyPath="yes"/>
+                    </Component>
+
+                    <!-- Util directory for external utilities -->
+                    <Directory Id="UtilFolder" Name="util">
+                        <!-- VASM assembler -->
+                        <Component Id="VasmUtility" Guid="*">
+                            <File
+                                Id="VasmExe"
+                                Name="vasm6502_std.exe"
+                                DiskId="1"
+                                Source="external-utils\vasm6502_std.exe"
+                                KeyPath="yes"/>
+                        </Component>
+
+                        <!-- LZSA compressor -->
+                        <Component Id="LzsaUtility" Guid="*">
+                            <File
+                                Id="LzsaExe"
+                                Name="lzsa.exe"
+                                DiskId="1"
+                                Source="external-utils\lzsa.exe"
+                                KeyPath="yes"/>
+                        </Component>
+
+                        <!-- LICENSE files -->
+                        <Component Id="LicenseLzsa" Guid="*">
+                            <File
+                                Id="LicenseLzsaFile"
+                                Name="LICENSE-lzsa"
+                                DiskId="1"
+                                Source="external-utils\LICENSE-lzsa"
+                                KeyPath="yes"/>
+                        </Component>
+
+                        <Component Id="LicenseVasm" Guid="*">
+                            <File
+                                Id="LicenseVasmFile"
+                                Name="LICENSE-vasm"
+                                DiskId="1"
+                                Source="external-utils\LICENSE-vasm"
+                                KeyPath="yes"/>
+                        </Component>
+
+                        <Component Id="LicenseCc0" Guid="*">
+                            <File
+                                Id="LicenseCc0File"
+                                Name="LICENSE.cc0.md"
+                                DiskId="1"
+                                Source="external-utils\LICENSE.cc0.md"
+                                KeyPath="yes"/>
+                        </Component>
+
+                        <Component Id="LicenseZlib" Guid="*">
+                            <File
+                                Id="LicenseZlibFile"
+                                Name="LICENSE.zlib.md"
+                                DiskId="1"
+                                Source="external-utils\LICENSE.zlib.md"
+                                KeyPath="yes"/>
+                        </Component>
+
+                    </Directory>
+
+                </Directory>
+            </Directory>
+
+            <!-- Desktop shortcut -->
+            <Directory Id="DesktopFolder" Name="Desktop">
+                <Component Id="DesktopShortcut" Guid="B8F4C3D2-8E9A-4F1B-9C2D-3E4F5A6B7C8D">
+                    <Shortcut
+                        Id="DesktopShortcut"
+                        Name="VICE Snapshot to PRG Converter"
+                        Description="Convert VICE snapshots to C64 PRG files"
+                        Target="[APPLICATIONFOLDER]vice-snapshot-to-prg-converter.exe"
+                        WorkingDirectory="APPLICATIONFOLDER"/>
+                    <RemoveFolder Id="RemoveDesktopFolder" On="uninstall"/>
+                    <RegistryValue
+                        Root="HKCU"
+                        Key="Software\Commodore 64 Tools\ViceSnapshotConverter"
+                        Name="DesktopShortcut"
+                        Type="integer"
+                        Value="1"
+                        KeyPath="yes"/>
+                </Component>
+            </Directory>
+
+            <!-- Start Menu shortcuts -->
+            <Directory Id="ProgramMenuFolder">
+                <Directory Id="ApplicationProgramsFolder" Name="VICE Snapshot to PRG Converter">
+                    <Component Id="StartMenuShortcuts" Guid="C9F5D4E3-9F0B-5A2C-AD3E-4F5A6B7C8D9E">
+                        <Shortcut
+                            Id="ApplicationStartMenuShortcut"
+                            Name="VICE Snapshot to PRG Converter"
+                            Description="Convert VICE snapshots to C64 PRG files"
+                            Target="[APPLICATIONFOLDER]vice-snapshot-to-prg-converter.exe"
+                            WorkingDirectory="APPLICATIONFOLDER"/>
+                        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall"/>
+                        <RegistryValue
+                            Root="HKCU"
+                            Key="Software\Commodore 64 Tools\ViceSnapshotConverter"
+                            Name="StartMenuShortcut"
+                            Type="integer"
+                            Value="1"
+                            KeyPath="yes"/>
+                    </Component>
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <Feature
+            Id="Complete"
+            Title="VICE Snapshot to PRG Converter"
+            Description="Complete installation of VICE Snapshot to PRG Converter with all utilities."
+            Level="1"
+            ConfigurableDirectory="APPLICATIONFOLDER"
+            AllowAdvertise="no"
+            Display="expand"
+            Absent="disallow">
+
+            <!-- Main application -->
+            <ComponentRef Id="MainExecutable"/>
+            <ComponentRef Id="VCRuntime"/>
+
+            <!-- Utilities -->
+            <ComponentRef Id="VasmUtility"/>
+            <ComponentRef Id="LzsaUtility"/>
+            <ComponentRef Id="LicenseLzsa"/>
+            <ComponentRef Id="LicenseVasm"/>
+            <ComponentRef Id="LicenseCc0"/>
+            <ComponentRef Id="LicenseZlib"/>
+
+            <!-- Shortcuts -->
+            <Feature
+                Id="Shortcuts"
+                Title="Desktop and Start Menu Shortcuts"
+                Description="Creates shortcuts on the Desktop and in the Start Menu for easy access."
+                Level="1">
+                <ComponentRef Id="DesktopShortcut"/>
+                <ComponentRef Id="StartMenuShortcuts"/>
+            </Feature>
+        </Feature>
+
+        <SetProperty Id="ARPINSTALLLOCATION" Value="[APPLICATIONFOLDER]" After="CostFinalize"/>
+
+        <!-- Add/Remove Programs properties -->
+        <Property Id="ARPPRODUCTICON" Value="ProductICO" />
+        <Property Id="ARPURLINFOABOUT" Value="https://github.com/tommyo123/Vice_Snapshot_to_PRG/"/>
+        <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
+
+        <!-- Product icon (you can create one and uncomment this) -->
+        <!-- <Icon Id="ProductICO" SourceFile="wix\Product.ico"/> -->
+
+        <UI>
+            <UIRef Id="WixUI_FeatureTree"/>
+
+            <!-- Skip license dialog since this is public domain -->
+            <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" Order="99">1</Publish>
+            <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="99">1</Publish>
+        </UI>
+
+        <!-- Custom banner (493 x 58 pixels) -->
+        <!-- <WixVariable Id="WixUIBannerBmp" Value="wix\Banner.bmp"/> -->
+
+        <!-- Custom dialog image (493 x 312 pixels) -->
+        <!-- <WixVariable Id="WixUIDialogBmp" Value="wix\Dialog.bmp"/> -->
+
+    </Product>
+
+</Wix>
