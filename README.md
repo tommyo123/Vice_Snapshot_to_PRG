@@ -98,7 +98,7 @@ The LZSA compression utility that compresses the memory segments.
 - **License**: Open source (see LZSA repository)
 - **Purpose**: Compresses memory data using LZSA1 algorithm
 
-**These programs are not developed by the author of this converter** but are redistributed with permission for convenience. Full credit goes to their respective authors.
+**These programs are not developed by the author of this converter** but are redistributed under their respective open-source licenses for convenience. Full credit goes to their respective authors.
 
 ## Installation
 
