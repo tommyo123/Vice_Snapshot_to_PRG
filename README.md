@@ -75,10 +75,13 @@ The converter scans the entire C64 memory space (`$0200-$FFEF`) looking for sequ
 
 The restoration process works in stages:
 1. Main decompressor runs from the PRG load address
-2. Decompresses VIC-II, SID, CIA, and zero page data
-3. Copies final restoration code to page 1 (`$0100`)
-4. Switches to RAM-only mode and decompresses main memory
-5. Final restoration code restores page 1 and jumps to original execution point
+2. Decompresses Color RAM, VIC-II, SID, and zero page data (while I/O is enabled)
+3. Restores CIA1 and CIA2 registers directly
+4. Switches to RAM-only mode (`$01 = $34`)
+5. Copies compressed main RAM data and relocation code to top of memory
+6. Copies final restoration code to page 1 (`$0100-$01FF`)
+7. Jumps to relocated decompressor which decompresses main RAM
+8. Final restoration code restores page 1 and jumps to original execution point
 
 ## Dependencies
 
