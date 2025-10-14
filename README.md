@@ -16,7 +16,7 @@ The concept is inspired by the classic **Action Replay cartridge's "BACKUP" feat
 - **Small decompression footprint**: Minimal memory overhead with intelligent free-space detection
 - **GUI application**: Easy-to-use graphical interface for Windows
 
-### System Requirements
+## System Requirements
 
 **Tested on:**
 - Windows 11 (64-bit)
