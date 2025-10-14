@@ -16,6 +16,15 @@ The concept is inspired by the classic **Action Replay cartridge's "BACKUP" feat
 - **Small decompression footprint**: Minimal memory overhead with intelligent free-space detection
 - **GUI application**: Easy-to-use graphical interface for Windows
 
+## Download
+
+**Latest release:** [Download from GitHub Releases](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
+
+The release package includes:
+- Windows installer (.msi) with automatic setup
+- Portable .zip file for manual installation
+- All required utilities (VASM assembler and LZSA compressor)
+
 ## System Requirements
 
 **Tested on:**
@@ -130,9 +139,22 @@ The LZSA compression utility that compresses the memory segments.
 
 ## Installation
 
-1. Download the release package
+### Using the Installer (Recommended)
+
+1. Download the latest `.msi` installer from the [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
+2. Run the installer and follow the on-screen instructions
+3. The installer will:
+    - Install the program to `Program Files\vice-snapshot-to-prg-converter\`
+    - Create desktop and Start Menu shortcuts
+    - Include all required utilities in the `util` folder
+    - Bundle Visual C++ runtime if not already installed
+
+### Manual Installation (Portable)
+
+1. Download the latest `.zip` package from the [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
 2. Extract to a directory of your choice
 3. Ensure the `util` folder (containing `vasm6502_std.exe` and `lzsa.exe`) is in the same directory as the converter executable
+4. Run `vice-snapshot-to-prg-converter.exe`
 
 The converter will automatically:
 - Find the `util` folder next to the executable
