@@ -5,7 +5,7 @@
   This installer creates the following structure:
   Program Files\vice-snapshot-to-prg-converter\
   ├── vice-snapshot-to-prg-converter.exe
-  ├── vcruntime140.dll
+  ├── vcruntime140.dll (only if VC++ Redistributable not installed)
   └── util\
       ├── vasm6502_std.exe
       ├── lzsa.exe
@@ -47,6 +47,15 @@
         <Media Id="1" Cabinet="media1.cab" EmbedCab="yes" DiskPrompt="CD-ROM #1"/>
         <Property Id="DiskPrompt" Value="VICE Snapshot to PRG Converter Installation"/>
 
+        <!-- Check if VC++ Redistributable is already installed -->
+        <Property Id="VCREDIST_INSTALLED">
+            <RegistrySearch Id="VCRedist2015Plus_x64"
+                Root="HKLM"
+                Key="SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+                Name="Installed"
+                Type="raw" />
+        </Property>
+
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="$(var.PlatformProgramFilesFolder)" Name="PFiles">
                 <Directory Id="APPLICATIONFOLDER" Name="vice-snapshot-to-prg-converter">
@@ -61,8 +70,9 @@
                             KeyPath="yes"/>
                     </Component>
 
-                    <!-- VC++ Runtime DLL -->
+                    <!-- VC++ Runtime DLL - only installed if VC++ Redistributable is not present -->
                     <Component Id="VCRuntime" Guid="*">
+                        <Condition>NOT VCREDIST_INSTALLED</Condition>
                         <File
                             Id="VCRuntime140"
                             Name="vcruntime140.dll"

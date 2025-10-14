@@ -1,0 +1,158 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install WiX Toolset v3
+        shell: pwsh
+        run: |
+          Write-Host "Downloading WiX Toolset 3.14..."
+          $wixUrl = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314.exe"
+          $wixInstaller = "$env:TEMP\wix314.exe"
+          Invoke-WebRequest -Uri $wixUrl -OutFile $wixInstaller
+          
+          Write-Host "Installing WiX Toolset..."
+          Start-Process -FilePath $wixInstaller -ArgumentList "/install", "/quiet", "/norestart" -Wait
+          
+          # Add WiX to PATH
+          $wixPath = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
+          if (Test-Path $wixPath) {
+            echo "$wixPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            Write-Host "WiX Toolset installed and added to PATH"
+          } else {
+            Write-Error "WiX installation path not found"
+            exit 1
+          }
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix
+
+      - name: Copy vcruntime140.dll to external-utils
+        shell: pwsh
+        run: |
+          $vcRuntimePath = "C:\Windows\System32\vcruntime140.dll"
+          if (Test-Path $vcRuntimePath) {
+            Copy-Item $vcRuntimePath -Destination external-utils\vcruntime140.dll
+            Write-Host "vcruntime140.dll copied successfully"
+          } else {
+            Write-Error "vcruntime140.dll not found in System32"
+            exit 1
+          }
+
+      - name: Verify external-utils files
+        shell: pwsh
+        run: |
+          Write-Host "Checking external-utils directory:"
+          Get-ChildItem external-utils | Format-Table Name, Length
+          
+          $requiredFiles = @(
+            "vasm6502_std.exe",
+            "lzsa.exe",
+            "vcruntime140.dll",
+            "LICENSE-lzsa",
+            "LICENSE-vasm",
+            "LICENSE.cc0.md",
+            "LICENSE.zlib.md"
+          )
+          
+          $missing = @()
+          foreach ($file in $requiredFiles) {
+            if (-not (Test-Path "external-utils\$file")) {
+              $missing += $file
+            }
+          }
+          
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required files: $($missing -join ', ')"
+            exit 1
+          }
+          
+          Write-Host "All required files present"
+
+      - name: Build Rust project
+        run: cargo build --release --verbose
+
+      - name: Create MSI Installer
+        run: cargo wix --no-build --nocapture
+
+      - name: Get version from tag
+        id: get_version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref }}"
+          $version = $tag -replace 'refs/tags/v', ''
+          echo "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Version: $version"
+
+      - name: Find MSI file
+        id: find_msi
+        shell: pwsh
+        run: |
+          $msiFile = Get-ChildItem -Path "target\wix" -Filter "*.msi" | Select-Object -First 1
+          if ($null -eq $msiFile) {
+            Write-Error "No MSI file found in target\wix"
+            exit 1
+          }
+          $msiPath = $msiFile.FullName
+          $msiName = $msiFile.Name
+          echo "msi_path=$msiPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          echo "msi_name=$msiName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Found MSI: $msiName"
+          Write-Host "Full path: $msiPath"
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "${{ steps.find_msi.outputs.msi_path }}"
+          artifactErrorsFailBuild: true
+          body: |
+            ## VICE Snapshot to PRG Converter v${{ steps.get_version.outputs.version }}
+            
+            ### Installation
+            Download and run the MSI installer below.
+            
+            ### Requirements
+            - Windows 7 or later (64-bit)
+            - Visual C++ Redistributable will be used if installed, otherwise bundled runtime is included
+            
+            ### Changes
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+            
+            ### Files
+            - `${{ steps.find_msi.outputs.msi_name }}` - Windows installer
+          token: ${{ secrets.GITHUB_TOKEN }}
+          draft: false
+          prerelease: false
