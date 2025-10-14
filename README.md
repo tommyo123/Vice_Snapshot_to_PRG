@@ -22,7 +22,25 @@ The concept is inspired by the classic **Action Replay cartridge's "BACKUP" feat
 
 The release package includes:
 - Windows installer (.msi) with automatic setup
+- Portable .zip file for manual installation
 - All required utilities (VASM assembler and LZSA compressor)
+
+### Security Warning on Download
+
+**Windows and your browser may show security warnings for the MSI installer.**
+
+This is normal for unsigned software from new publishers. The warnings occur because the installer is not code-signed (code signing certificates cost $75-400/year, which is not sustainable for a free hobby project).
+
+**The file is safe.** You may encounter:
+
+**1. Browser download warning:**
+- Click "Keep" (or similar) to complete the download
+
+**2. Windows SmartScreen warning when running the installer:**
+- Click "More info"
+- Click "Run anyway"
+
+Alternatively, you can build from source to verify the code yourself.
 
 ## System Requirements
 
@@ -138,7 +156,7 @@ The LZSA compression utility that compresses the memory segments.
 
 ## Installation
 
-### Using the Installer
+### Using the Installer (Recommended)
 
 1. Download the latest `.msi` installer from the [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
 2. Run the installer and follow the on-screen instructions
@@ -147,6 +165,13 @@ The LZSA compression utility that compresses the memory segments.
     - Create desktop and Start Menu shortcuts
     - Include all required utilities in the `util` folder
     - Bundle Visual C++ runtime if not already installed
+
+### Manual Installation (Portable)
+
+1. Download the latest `.zip` package from the [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
+2. Extract to a directory of your choice
+3. Ensure the `util` folder (containing `vasm6502_std.exe` and `lzsa.exe`) is in the same directory as the converter executable
+4. Run `vice-snapshot-to-prg-converter.exe`
 
 The converter will automatically:
 - Find the `util` folder next to the executable
