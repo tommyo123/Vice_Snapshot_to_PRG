@@ -22,7 +22,6 @@ The concept is inspired by the classic **Action Replay cartridge's "BACKUP" feat
 
 The release package includes:
 - Windows installer (.msi) with automatic setup
-- Portable .zip file for manual installation
 - All required utilities (VASM assembler and LZSA compressor)
 
 ## System Requirements
