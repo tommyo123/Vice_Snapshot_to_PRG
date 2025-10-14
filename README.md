@@ -16,6 +16,19 @@ The concept is inspired by the classic **Action Replay cartridge's "BACKUP" feat
 - **Small decompression footprint**: Minimal memory overhead with intelligent free-space detection
 - **GUI application**: Easy-to-use graphical interface for Windows
 
+## System Requirements
+
+**Tested on:**
+- Windows 11 (64-bit)
+
+**Expected to work on:**
+- Windows 7, 8, 10 (64-bit) - based on toolchain compatibility
+- Visual C++ Redistributable 2015-2022 or bundled runtime
+
+**Not supported:**
+- 32-bit Windows
+- Windows XP/Vista
+
 ## Important Limitations
 
 ### VICE Version Compatibility
@@ -82,18 +95,18 @@ The restoration process works in stages:
 6. Copies compressed main RAM data and relocated decompressor to top of memory, then copies relocated decompressor to `$0100`
 7. Jumps to relocated decompressor which decompresses main RAM (`$0200-$FFEF`), including the preprogrammed final restore code in page 1
 8. Block 9 restoration code executes:
-   - Restores original page 1 (`$0100-$01FF`) from preserved blocks 1-8
-   - Restores vectors (`$FFF0-$FFFF`)
-   - Cleans up temporary blocks
-   - Restores zero page locations (`$F8-$FF`)
-   - Jumps to final restore code (now in restored page 1)
+    - Restores original page 1 (`$0100-$01FF`) from preserved blocks 1-8
+    - Restores vectors (`$FFF0-$FFFF`)
+    - Cleans up temporary blocks
+    - Restores zero page locations (`$F8-$FF`)
+    - Jumps to final restore code (now in restored page 1)
 9. Final restore code executes:
-   - Wipes block 9
-   - Restores CPU port and stack pointer
-   - Re-enables I/O (`$01 = $35`)
-   - Configures VIC IRQ and CIA interrupts
-   - Builds RTI frame on stack with original PC and status
-   - Loads final A, X, Y registers and executes RTI to resume at original PC
+    - Wipes block 9
+    - Restores CPU port and stack pointer
+    - Re-enables I/O (`$01 = $35`)
+    - Configures VIC IRQ and CIA interrupts
+    - Builds RTI frame on stack with original PC and status
+    - Loads final A, X, Y registers and executes RTI to resume at original PC
 
 ## Dependencies
 
@@ -139,19 +152,19 @@ The converter will automatically:
 2. **Load your program normally** (avoid "Smart attach...")
 
 3. **Take a snapshot:**
-   - File → Save snapshot image
-   - Save as a `.vsf` file
+    - File → Save snapshot image
+    - Save as a `.vsf` file
 
 4. **Run the converter:**
-   - Launch the GUI application
-   - Browse to select your `.vsf` snapshot file
-   - Choose output location for the `.prg` file
-   - Click "Convert"
+    - Launch the GUI application
+    - Browse to select your `.vsf` snapshot file
+    - Choose output location for the `.prg` file
+    - Click "Convert"
 
 5. **Transfer to real C64:**
-   - Transfer the resulting PRG file to your C64 via disk, SD card reader, or other means
-   - `LOAD "yourfile.prg",8,1` (or device 8)
-   - `RUN`
+    - Transfer the resulting PRG file to your C64 via disk, SD card reader, or other means
+    - `LOAD "yourfile.prg",8,1` (or device 8)
+    - `RUN`
 
 The program will restore the complete machine state and resume execution exactly where the snapshot was taken.
 
@@ -227,7 +240,3 @@ If you get parsing errors or corrupted output, verify you're using **VICE 3.9 x6
 This program is **unlicensed** and dedicated to the **public domain**.
 
 You are free to use, modify, and distribute this software for any purpose without restriction.
-
----
-
-**Made for the love of retro computing and the Commodore 64 community.**

@@ -26,7 +26,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::Path;
 
-use config::Config;
+use config::{Config, VERSION};
 use convert_snapshot::ConvertSnapshot;
 
 const WINDOW_WIDTH: i32 = 720;
@@ -63,10 +63,10 @@ fn main() {
   <polygon points="16.2,9.2 20.2,11.5 16.2,13.8" fill="#27C93F" stroke="none"/>
 </svg>"##;
 
-    // Create main window
+    // Create main window with version number
     let mut window = Window::default()
         .with_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-        .with_label("VICE 3.9 x64sc Snapshot to PRG Converter v0.9-beta");
+        .with_label(&format!("VICE 3.9 x64sc Snapshot to PRG Converter v{}", VERSION));
     window.make_resizable(false);
 
     // Set custom icon
@@ -138,10 +138,15 @@ fn main() {
     status_display.wrap_mode(text::WrapMode::AtBounds, 0);
     status_display.set_frame(FrameType::DownBox);
 
-    // Action buttons - symmetrically placed
+    // Action buttons - three buttons symmetrically placed
     let button_y = WINDOW_HEIGHT - BUTTON_HEIGHT - 20;
-    let convert_x = MARGIN;
-    let quit_x = WINDOW_WIDTH - MARGIN - BUTTON_WIDTH;
+    let button_spacing = 10;
+    let total_button_width = 3 * BUTTON_WIDTH + 2 * button_spacing;
+    let start_x = (WINDOW_WIDTH - total_button_width) / 2;
+
+    let convert_x = start_x;
+    let help_x = start_x + BUTTON_WIDTH + button_spacing;
+    let quit_x = start_x + 2 * BUTTON_WIDTH + 2 * button_spacing;
 
     let mut convert_btn = Button::default()
         .with_pos(convert_x, button_y)
@@ -149,6 +154,11 @@ fn main() {
         .with_label("Convert");
     convert_btn.set_color(Color::from_rgb(70, 130, 180));
     convert_btn.set_label_color(Color::White);
+
+    let mut help_btn = Button::default()
+        .with_pos(help_x, button_y)
+        .with_size(BUTTON_WIDTH, BUTTON_HEIGHT)
+        .with_label("Help");
 
     let mut quit_btn = Button::default()
         .with_pos(quit_x, button_y)
@@ -231,6 +241,11 @@ fn main() {
             }
         });
     }
+
+    // Help button callback
+    help_btn.set_callback(|_| {
+        show_help_window();
+    });
 
     // Convert button callback
     {
@@ -330,6 +345,105 @@ fn main() {
     });
 
     app.run().unwrap();
+}
+
+/// Show help window with usage instructions
+fn show_help_window() {
+    let help_width = 640;
+    let help_height = 540;
+
+    let mut help_window = Window::default()
+        .with_size(help_width, help_height)
+        .with_label(&format!("Help - VICE Snapshot to PRG Converter v{}", VERSION));
+    help_window.make_resizable(false);
+    help_window.set_pos(
+        (app::screen_size().0 as i32 - help_width) / 2,
+        (app::screen_size().1 as i32 - help_height) / 2,
+    );
+
+    let help_text = format!(
+        r#"VICE 3.9 x64sc Snapshot to PRG Converter v{}
+
+This program is unlicensed and dedicated to the public domain.
+Developed by Tommy Olsen.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+OVERVIEW
+
+Converts VICE 3.9 x64sc emulator snapshots (.vsf files) into
+self-restoring PRG files that run on real Commodore 64 hardware.
+
+The PRG file will restore the complete machine state including CPU
+registers, memory, VIC-II graphics, SID audio, CIA timers, and
+zero page exactly as it was when the snapshot was taken.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+QUICK START
+
+1. In VICE 3.9 x64sc monitor (Alt+H), run:
+   f 0000 ffff 00
+   reset
+   x (exit monitor)
+
+2. Load your program normally (avoid "Smart attach...")
+
+3. Take snapshot: File → Save snapshot image (.vsf)
+
+4. In this converter:
+   - Select input .vsf file
+   - Choose output .prg filename
+   - Click Convert
+
+5. Transfer .prg to C64 and run:
+   LOAD "yourfile.prg",8,1
+   RUN
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+IMPORTANT LIMITATIONS
+
+• Only works with VICE 3.9 x64sc snapshots
+• Memory MUST be initialized before snapshot (f 0000 ffff 00)
+• Do NOT use "Smart attach..." feature in VICE
+• Some edge cases with unusual stack configurations may fail
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For complete documentation, see README.md in the installation
+directory or visit: https://github.com/tommyo123/Vice_Snapshot_to_PRG
+"#, VERSION);
+
+    let mut text_buffer = TextBuffer::default();
+    text_buffer.set_text(&help_text);
+
+    let mut text_display = TextDisplay::default()
+        .with_pos(15, 15)
+        .with_size(help_width - 30, help_height - 70);
+    text_display.set_buffer(text_buffer);
+    text_display.wrap_mode(text::WrapMode::AtBounds, 0);
+    text_display.set_frame(FrameType::DownBox);
+
+    let mut close_btn = Button::default()
+        .with_pos((help_width - 100) / 2, help_height - 45)
+        .with_size(100, 35)
+        .with_label("Close");
+
+    help_window.end();
+    help_window.make_modal(true);
+    help_window.show();
+
+    close_btn.set_callback({
+        let mut win = help_window.clone();
+        move |_| {
+            win.hide();
+        }
+    });
+
+    while help_window.shown() {
+        app::wait();
+    }
 }
 
 /// Clean up the temporary work directory

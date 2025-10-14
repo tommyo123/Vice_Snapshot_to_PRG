@@ -18,6 +18,3 @@ codegen-units = 1
 [build-dependencies]
 winres = "0.1"
 
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
-

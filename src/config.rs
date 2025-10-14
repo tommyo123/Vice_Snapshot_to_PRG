@@ -8,6 +8,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Application version
+pub const VERSION: &str = "0.9-beta";
+
 #[derive(Clone)]
 pub struct Config {
     pub work_path: PathBuf,
