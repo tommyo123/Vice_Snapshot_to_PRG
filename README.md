@@ -16,6 +16,19 @@ The concept is inspired by the classic **Action Replay cartridge's "BACKUP" feat
 - **Small decompression footprint**: Minimal memory overhead with intelligent free-space detection
 - **GUI application**: Easy-to-use graphical interface for Windows
 
+### System Requirements
+
+**Tested on:**
+- Windows 11 (64-bit)
+
+**Expected to work on:**
+- Windows 7, 8, 10 (64-bit) - based on toolchain compatibility
+- Visual C++ Redistributable 2015-2022 or bundled runtime
+
+**Not supported:**
+- 32-bit Windows
+- Windows XP/Vista
+ 
 ## Important Limitations
 
 ### VICE Version Compatibility
