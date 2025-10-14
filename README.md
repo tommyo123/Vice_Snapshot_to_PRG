@@ -138,7 +138,7 @@ The LZSA compression utility that compresses the memory segments.
 
 ## Installation
 
-### Using the Installer (Recommended)
+### Using the Installer
 
 1. Download the latest `.msi` installer from the [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
 2. Run the installer and follow the on-screen instructions
@@ -147,13 +147,6 @@ The LZSA compression utility that compresses the memory segments.
     - Create desktop and Start Menu shortcuts
     - Include all required utilities in the `util` folder
     - Bundle Visual C++ runtime if not already installed
-
-### Manual Installation (Portable)
-
-1. Download the latest `.zip` package from the [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
-2. Extract to a directory of your choice
-3. Ensure the `util` folder (containing `vasm6502_std.exe` and `lzsa.exe`) is in the same directory as the converter executable
-4. Run `vice-snapshot-to-prg-converter.exe`
 
 The converter will automatically:
 - Find the `util` folder next to the executable
