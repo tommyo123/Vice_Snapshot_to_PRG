@@ -1,161 +1,173 @@
-name: Build and Release
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 0.9.1-test)'
+        required: true
+        default: '0.9.1-test'
+      create_release:
+        description: 'Create GitHub release?'
+        required: true
+        type: boolean
+        default: false
 
-permissions:
-  contents: write
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  build-and-release:
+  build-release:
     runs-on: windows-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Set version
+        id: version
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ github.event.inputs.version }}"
+          } else {
+            $version = "${{ github.ref_name }}"
+          }
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install WiX Toolset v3
-        shell: pwsh
-        run: |
-          Write-Host "Downloading WiX Toolset 3.14..."
-          $wixUrl = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314.exe"
-          $wixInstaller = "$env:TEMP\wix314.exe"
-          Invoke-WebRequest -Uri $wixUrl -OutFile $wixInstaller
-          
-          Write-Host "Installing WiX Toolset..."
-          Start-Process -FilePath $wixInstaller -ArgumentList "/install", "/quiet", "/norestart" -Wait
-          
-          # Add WiX to PATH
-          $wixPath = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
-          if (Test-Path $wixPath) {
-            echo "$wixPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            Write-Host "WiX Toolset installed and added to PATH"
-          } else {
-            Write-Error "WiX installation path not found"
-            exit 1
-          }
-
-      - name: Install cargo-wix
-        run: cargo install cargo-wix
-
-      - name: Copy vcruntime140.dll to external-utils
-        shell: pwsh
-        run: |
-          $vcRuntimePath = "C:\Windows\System32\vcruntime140.dll"
-          if (Test-Path $vcRuntimePath) {
-            Copy-Item $vcRuntimePath -Destination external-utils\vcruntime140.dll
-            Write-Host "vcruntime140.dll copied successfully"
-          } else {
-            Write-Error "vcruntime140.dll not found in System32"
-            exit 1
-          }
-
-      - name: Verify external-utils files
-        shell: pwsh
-        run: |
-          Write-Host "Checking external-utils directory:"
-          Get-ChildItem external-utils | Format-Table Name, Length
-          
-          $requiredFiles = @(
-            "vasm6502_std.exe",
-            "lzsa.exe",
-            "vcruntime140.dll",
-            "LICENSE-lzsa",
-            "LICENSE-vasm",
-            "LICENSE.cc0.md",
-            "LICENSE.zlib.md"
-          )
-          
-          $missing = @()
-          foreach ($file in $requiredFiles) {
-            if (-not (Test-Path "external-utils\$file")) {
-              $missing += $file
-            }
-          }
-          
-          if ($missing.Count -gt 0) {
-            Write-Error "Missing required files: $($missing -join ', ')"
-            exit 1
-          }
-          
-          Write-Host "All required files present"
-
-      - name: Build Rust project
+      - name: Build Release
         run: cargo build --release --verbose
 
-      - name: Create MSI Installer
-        run: cargo wix --no-build --nocapture
-
-      - name: Get version from tag
-        id: get_version
-        shell: pwsh
+      - name: Install WiX Toolset
         run: |
-          $tag = "${{ github.ref }}"
-          $version = $tag -replace 'refs/tags/v', ''
-          echo "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Write-Host "Version: $version"
+          choco install wixtoolset -y
+          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $env:GITHUB_PATH
 
-      - name: Find MSI file
-        id: find_msi
-        shell: pwsh
+      - name: Build MSI
         run: |
-          $msiFile = Get-ChildItem -Path "target\wix" -Filter "*.msi" | Select-Object -First 1
-          if ($null -eq $msiFile) {
-            Write-Error "No MSI file found in target\wix"
-            exit 1
-          }
-          $msiPath = $msiFile.FullName
-          $msiName = $msiFile.Name
-          echo "msi_path=$msiPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          echo "msi_name=$msiName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Write-Host "Found MSI: $msiName"
-          Write-Host "Full path: $msiPath"
+          candle.exe -nologo -ext WixUIExtension -ext WixUtilExtension `
+            -dCargoTargetBinDir=target\release `
+            -dVersion="${{ env.VERSION }}" `
+            main.wxs
+          light.exe -nologo -ext WixUIExtension -ext WixUtilExtension `
+            -sval -spdb `
+            -out vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64.msi `
+            main.wixobj
+
+      - name: Create Portable Package
+        run: |
+          # Create package folder
+          New-Item -ItemType Directory -Force -Path portable-package
+          New-Item -ItemType Directory -Force -Path portable-package\util
+          
+          # Copy executable
+          Copy-Item target\release\vice-snapshot-to-prg-converter.exe portable-package\
+          
+          # Copy VC++ runtime
+          Copy-Item external-utils\vcruntime140.dll portable-package\
+          
+          # Copy utilities
+          Copy-Item external-utils\vasm6502_std.exe portable-package\util\
+          Copy-Item external-utils\lzsa.exe portable-package\util\
+          
+          # Copy licenses
+          Copy-Item external-utils\LICENSE-lzsa portable-package\util\
+          Copy-Item external-utils\LICENSE-vasm portable-package\util\
+          Copy-Item external-utils\LICENSE.cc0.md portable-package\util\
+          Copy-Item external-utils\LICENSE.zlib.md portable-package\util\
+          
+          # Copy documentation
+          Copy-Item README.md portable-package\
+          Copy-Item CHANGELOG.md portable-package\
+          
+          # Create portable README
+          @"
+          VICE Snapshot to PRG Converter - Portable Edition
+          ==================================================
+          
+          Version: ${{ env.VERSION }}
+          
+          This is a portable version that requires no installation.
+          
+          HOW TO USE:
+          1. Extract this ZIP file to any folder you like
+          2. Run vice-snapshot-to-prg-converter.exe
+          3. Done!
+          
+          The program will:
+          - Use the "util" folder next to the .exe for tools
+          - Create temporary files in your system's temp folder
+          - Not write anything to registry or Program Files
+          
+          REQUIREMENTS:
+          - Windows 7 or later (64-bit)
+          - Visual C++ Redistributable 2015-2022
+            (included as vcruntime140.dll if not already installed)
+          
+          To completely remove:
+          - Just delete the folder you extracted to
+          - Optionally clean temp folder: %TEMP%\ViceSnapshotConvert.*
+          
+          For full documentation, see README.md or visit:
+          https://github.com/tommyo123/Vice_Snapshot_to_PRG
+          "@ | Out-File -FilePath portable-package\README-PORTABLE.txt -Encoding UTF8
+          
+          # Create ZIP
+          Compress-Archive -Force -Path portable-package\* `
+            -DestinationPath vice-snapshot-to-prg-converter-${{ env.VERSION }}-portable.zip
+
+      - name: Upload Build Artifacts (for testing)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ env.VERSION }}
+          path: |
+            vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64.msi
+            vice-snapshot-to-prg-converter-${{ env.VERSION }}-portable.zip
+          retention-days: 7
 
       - name: Create Release
-        uses: ncipollo/release-action@v1
+        if: github.event_name == 'push' || github.event.inputs.create_release == 'true'
+        uses: softprops/action-gh-release@v1
         with:
-          artifacts: "${{ steps.find_msi.outputs.msi_path }}"
-          artifactErrorsFailBuild: true
+          files: |
+            vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64.msi
+            vice-snapshot-to-prg-converter-${{ env.VERSION }}-portable.zip
           body: |
-            ## VICE Snapshot to PRG Converter v${{ steps.get_version.outputs.version }}
+            ## VICE Snapshot to PRG Converter ${{ env.VERSION }}
             
-            ### Installation
-            Download and run the MSI installer below.
+            ### Installation Options
             
-            ### Requirements
-            - Windows 7 or later (64-bit)
-            - Visual C++ Redistributable will be used if installed, otherwise bundled runtime is included
+            **MSI Installer (Recommended):**
+            - Installs to Program Files
+            - Creates desktop and Start Menu shortcuts
+            - Automatic VC++ runtime handling
+            - Download: `vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64.msi`
+            
+            **Portable ZIP:**
+            - No installation required
+            - Extract and run anywhere
+            - Perfect for USB sticks or custom paths
+            - Download: `vice-snapshot-to-prg-converter-${{ env.VERSION }}-portable.zip`
+            
+            ### Security Warning
+            
+            Windows may show a SmartScreen warning because the installer is not code-signed.
+            This is normal for unsigned software. Click "More info" → "Run anyway".
+            The source code is available for review.
             
             ### Changes
-            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
             
-            ### Files
-            - `${{ steps.find_msi.outputs.msi_name }}` - Windows installer
-          token: ${{ secrets.GITHUB_TOKEN }}
+            See [CHANGELOG.md](https://github.com/tommyo123/Vice_Snapshot_to_PRG/blob/main/CHANGELOG.md) for details.
           draft: false
           prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
