@@ -56,6 +56,12 @@
                 Type="raw" />
         </Property>
 
+        <!-- Set the installation directory property for WixUI_InstallDir -->
+        <Property Id="WIXUI_INSTALLDIR" Value="APPLICATIONFOLDER" />
+
+        <!-- Set default installation location -->
+        <SetProperty Id="ARPINSTALLLOCATION" Value="[APPLICATIONFOLDER]" After="CostFinalize"/>
+
         <Directory Id="TARGETDIR" Name="SourceDir">
             <Directory Id="$(var.PlatformProgramFilesFolder)" Name="PFiles">
                 <Directory Id="APPLICATIONFOLDER" Name="vice-snapshot-to-prg-converter">
@@ -221,8 +227,6 @@
             </Feature>
         </Feature>
 
-        <SetProperty Id="ARPINSTALLLOCATION" Value="[APPLICATIONFOLDER]" After="CostFinalize"/>
-
         <!-- Add/Remove Programs properties -->
         <Property Id="ARPPRODUCTICON" Value="ProductICO" />
         <Property Id="ARPURLINFOABOUT" Value="https://github.com/tommyo123/Vice_Snapshot_to_PRG/"/>
@@ -232,11 +236,12 @@
         <!-- <Icon Id="ProductICO" SourceFile="wix\Product.ico"/> -->
 
         <UI>
-            <UIRef Id="WixUI_FeatureTree"/>
+            <!-- Use InstallDir UI instead of FeatureTree to allow directory selection -->
+            <UIRef Id="WixUI_InstallDir"/>
 
             <!-- Skip license dialog since this is public domain -->
-            <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" Order="99">1</Publish>
-            <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="99">1</Publish>
+            <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">1</Publish>
+            <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
         </UI>
 
         <!-- Custom banner (493 x 58 pixels) -->
