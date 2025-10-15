@@ -56,7 +56,7 @@ jobs:
           candle.exe -nologo -ext WixUIExtension -ext WixUtilExtension `
             -dCargoTargetBinDir=target\release `
             -dVersion="${{ env.VERSION }}" `
-            main.wxs
+            wix\main.wxs
           light.exe -nologo -ext WixUIExtension -ext WixUtilExtension `
             -sval -spdb `
             -out vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64.msi `
