@@ -31,12 +31,28 @@ jobs:
         id: version
         run: |
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $version = "${{ github.event.inputs.version }}"
+            $fullVersion = "${{ github.event.inputs.version }}"
           } else {
-            $version = "${{ github.ref_name }}"
+            $fullVersion = "${{ github.ref_name }}"
           }
-          echo "VERSION=$version" >> $env:GITHUB_ENV
-          echo "version=$version" >> $env:GITHUB_OUTPUT
+          
+          # Remove 'v' prefix if present
+          $fullVersion = $fullVersion -replace '^v', ''
+          
+          # Extract numeric version for WiX (x.x.x format)
+          if ($fullVersion -match '^(\d+\.\d+\.\d+)') {
+            $wixVersion = $matches[1] + '.0'
+          } else {
+            $wixVersion = '0.9.0.0'
+          }
+          
+          echo "VERSION=$fullVersion" >> $env:GITHUB_ENV
+          echo "WIX_VERSION=$wixVersion" >> $env:GITHUB_ENV
+          echo "version=$fullVersion" >> $env:GITHUB_OUTPUT
+          echo "wix_version=$wixVersion" >> $env:GITHUB_OUTPUT
+          
+          Write-Host "Full version: $fullVersion"
+          Write-Host "WiX version: $wixVersion"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -55,7 +71,7 @@ jobs:
         run: |
           candle.exe -nologo -ext WixUIExtension -ext WixUtilExtension `
             -dCargoTargetBinDir=target\release `
-            -dVersion="${{ env.VERSION }}" `
+            -dVersion="${{ env.WIX_VERSION }}" `
             wix\main.wxs
           light.exe -nologo -ext WixUIExtension -ext WixUtilExtension `
             -sval -spdb `
