@@ -7,7 +7,7 @@
 
 mod parse_vsf;
 mod make_prg_asm;
-mod asm6502;
+mod asm_wrapper;
 mod config;
 mod find_ram;
 mod patch_mem;

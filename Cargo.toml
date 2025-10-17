@@ -4,9 +4,9 @@ version = "0.9.0"
 edition = "2024"
 authors = ["Tommy Olsen"]
 
-
 [dependencies]
 fltk = { version = "1.4", features = ["fltk-bundled"] }
+asm6502 = { git = "https://github.com/tommyo123/asm6502" }
 
 [profile.release]
 opt-level = 3
@@ -17,4 +17,3 @@ codegen-units = 1
 
 [build-dependencies]
 winres = "0.1"
-

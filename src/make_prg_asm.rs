@@ -1,4 +1,4 @@
-//! PRG file generator using VASM assembler
+//! PRG file generator using inline asm6502 assembler
 //!
 //! Generates a self-restoring C64 PRG from compressed snapshot components.
 //!
@@ -72,12 +72,12 @@ impl MakePRGAsm {
             ).into());
         }
 
-        // Write temporary data files for INCBIN
+        // Write temporary data files for .incbin
         self.write_data_files(&relocated_binary)?;
 
         // Assemble main code
-        let main_asm = self.generate_main_code_vasm();
-        let prg_binary = self.assemble_with_vasm(&main_asm)?;
+        let main_asm = self.generate_main_code_asm6502();
+        let prg_binary = self.assemble_with_asm6502(&main_asm)?;
 
         // Write final PRG
         fs::write(output_path, &prg_binary)?;
@@ -100,671 +100,676 @@ impl MakePRGAsm {
         Ok(())
     }
 
-    fn assemble_with_vasm(&self, asm_source: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        use crate::asm6502::Assembler6502;
+    fn assemble_with_asm6502(&self, asm_source: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        use crate::asm_wrapper::Assembler6502Wrapper;
 
-        let mut assembler = Assembler6502::new(&self.config);
+        let mut assembler = Assembler6502Wrapper::new();
         let prg_binary = assembler.assemble_prg(asm_source)
-            .map_err(|e| format!("VASM assembly failed: {:?}", e))?;
+            .map_err(|e| format!("Assembly failed: {:?}", e))?;
 
         Ok(prg_binary)
     }
 
     fn assemble_relocated_code(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        use crate::asm6502::Assembler6502;
+        use crate::asm_wrapper::Assembler6502Wrapper;
 
         let asm_source = self.generate_relocated_decompressor();
 
-        let mut assembler = Assembler6502::new(&self.config);
+        let mut assembler = Assembler6502Wrapper::new();
         let binary = assembler.assemble_bytes(&asm_source)
             .map_err(|e| format!("Relocated code assembly failed: {:?}", e))?;
 
         Ok(binary)
     }
 
-    fn generate_main_code_vasm(&self) -> String {
+    fn generate_main_code_asm6502(&self) -> String {
         let work = self.config.work_str();
+
+        // Convert Windows backslashes to forward slashes for cross-platform compatibility
+        let work_path = work.replace('\\', "/");
+
         format!(r#"; C64 LZSA1 Snapshot Loader
-.org 0x0801
+*=$0801
 
 ; BASIC stub: SYS 2061
-.byte 0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00
+.byte $0B,$08,$0A,$00,$9E,$32,$30,$36,$31,$00,$00,$00
 
 ; LZSA1 zero page variables
-.equ LZSA_SRC_LO, 0xFC
-.equ LZSA_SRC_HI, 0xFD
-.equ LZSA_DST_LO, 0xFE
-.equ LZSA_DST_HI, 0xFF
-.equ LZSA_CMDBUF, 0xF9
-.equ LZSA_WINPTR, 0xFA
-.equ LZSA_OFFSET, 0xFA
+LZSA_SRC_LO = $FC
+LZSA_SRC_HI = $FD
+LZSA_DST_LO = $FE
+LZSA_DST_HI = $FF
+LZSA_CMDBUF = $F9
+LZSA_WINPTR = $FA
+LZSA_OFFSET = $FA
 
-START:
-    sei
-    cld
+start:
+    SEI
+    CLD
 
     ; Clear all pending interrupts
-    lda 0xdc0d
-    lda 0xdd0d
-    lda #0x7f
-    sta 0xdc0d
-    sta 0xdd0d
-    lda #0x00
-    sta 0xd01a
-    lda #0xff
-    sta 0xd019
+    LDA $DC0D
+    LDA $DD0D
+    LDA #$7F
+    STA $DC0D
+    STA $DD0D
+    LDA #$00
+    STA $D01A
+    LDA #$FF
+    STA $D019
 
     ; Initialize memory map and stack
-    lda #0x35
-    sta 0x01
-    ldx #0xff
-    txs
+    LDA #$35
+    STA $01
+    LDX #$FF
+    TXS
 
     ; Decompress Color RAM
-    lda #<COLOR_DATA
-    sta LZSA_SRC_LO
-    lda #>COLOR_DATA
-    sta LZSA_SRC_HI
-    lda #0x00
-    sta LZSA_DST_LO
-    lda #0xD8
-    sta LZSA_DST_HI
-    jsr DECOMPRESS_LZSA1
+    LDA #<color_data
+    STA LZSA_SRC_LO
+    LDA #>color_data
+    STA LZSA_SRC_HI
+    LDA #$00
+    STA LZSA_DST_LO
+    LDA #$D8
+    STA LZSA_DST_HI
+    JSR decompress_lzsa1
 
     ; Decompress VIC registers
-    lda #<VIC_DATA
-    sta LZSA_SRC_LO
-    lda #>VIC_DATA
-    sta LZSA_SRC_HI
-    lda #0x00
-    sta LZSA_DST_LO
-    lda #0xD0
-    sta LZSA_DST_HI
-    jsr DECOMPRESS_LZSA1
+    LDA #<vic_data
+    STA LZSA_SRC_LO
+    LDA #>vic_data
+    STA LZSA_SRC_HI
+    LDA #$00
+    STA LZSA_DST_LO
+    LDA #$D0
+    STA LZSA_DST_HI
+    JSR decompress_lzsa1
 
     ; Disable VIC IRQs
-    lda #0x00
-    sta 0xd01a
-    lda #0xff
-    sta 0xd019
+    LDA #$00
+    STA $D01A
+    LDA #$FF
+    STA $D019
 
     ; Decompress SID registers
-    lda #<SID_DATA
-    sta LZSA_SRC_LO
-    lda #>SID_DATA
-    sta LZSA_SRC_HI
-    lda #0x00
-    sta LZSA_DST_LO
-    lda #0xD4
-    sta LZSA_DST_HI
-    jsr DECOMPRESS_LZSA1
+    LDA #<sid_data
+    STA LZSA_SRC_LO
+    LDA #>sid_data
+    STA LZSA_SRC_HI
+    LDA #$00
+    STA LZSA_DST_LO
+    LDA #$D4
+    STA LZSA_DST_HI
+    JSR decompress_lzsa1
 
 ; =============================================================================
 ; CIA1 Complete Setup
 ; =============================================================================
     ; Disable all interrupts and stop timers
-    lda #0x7f
-    sta 0xdc0d
-    lda #0x00
-    sta 0xdc0e
-    sta 0xdc0f
+    LDA #$7F
+    STA $DC0D
+    LDA #$00
+    STA $DC0E
+    STA $DC0F
 
     ; Restore port registers
-    lda CIA1_DATA+2
-    sta 0xdc02
-    lda CIA1_DATA+3
-    sta 0xdc03
-    lda CIA1_DATA+0
-    sta 0xdc00
-    lda CIA1_DATA+1
-    sta 0xdc01
+    LDA cia1_data+2
+    STA $DC02
+    LDA cia1_data+3
+    STA $DC03
+    LDA cia1_data+0
+    STA $DC00
+    LDA cia1_data+1
+    STA $DC01
 
     ; Timer A: Write counter, force-load, write latch
-    lda CIA1_DATA+16
-    sta 0xdc04
-    lda CIA1_DATA+17
-    sta 0xdc05
-    lda #0x10
-    sta 0xdc0e
-    lda #0x00
-    sta 0xdc0e
-    lda CIA1_DATA+4
-    sta 0xdc04
-    lda CIA1_DATA+5
-    sta 0xdc05
+    LDA cia1_data+16
+    STA $DC04
+    LDA cia1_data+17
+    STA $DC05
+    LDA #$10
+    STA $DC0E
+    LDA #$00
+    STA $DC0E
+    LDA cia1_data+4
+    STA $DC04
+    LDA cia1_data+5
+    STA $DC05
 
     ; Timer B: Write counter, force-load, write latch
-    lda CIA1_DATA+18
-    sta 0xdc06
-    lda CIA1_DATA+19
-    sta 0xdc07
-    lda #0x10
-    sta 0xdc0f
-    lda #0x00
-    sta 0xdc0f
-    lda CIA1_DATA+6
-    sta 0xdc06
-    lda CIA1_DATA+7
-    sta 0xdc07
+    LDA cia1_data+18
+    STA $DC06
+    LDA cia1_data+19
+    STA $DC07
+    LDA #$10
+    STA $DC0F
+    LDA #$00
+    STA $DC0F
+    LDA cia1_data+6
+    STA $DC06
+    LDA cia1_data+7
+    STA $DC07
 
     ; TOD registers (hours->minutes->seconds->tenths)
-    lda CIA1_DATA+11
-    sta 0xdc0b
-    lda CIA1_DATA+10
-    sta 0xdc0a
-    lda CIA1_DATA+9
-    sta 0xdc09
-    lda CIA1_DATA+8
-    sta 0xdc08
+    LDA cia1_data+11
+    STA $DC0B
+    LDA cia1_data+10
+    STA $DC0A
+    LDA cia1_data+9
+    STA $DC09
+    LDA cia1_data+8
+    STA $DC08
 
     ; SDR and control registers
-    lda CIA1_DATA+12
-    sta 0xdc0c
-    lda CIA1_DATA+14
-    and #0xfe
-    sta 0xdc0e
-    lda CIA1_DATA+15
-    and #0xfe
-    sta 0xdc0f
+    LDA cia1_data+12
+    STA $DC0C
+    LDA cia1_data+14
+    AND #$FE
+    STA $DC0E
+    LDA cia1_data+15
+    AND #$FE
+    STA $DC0F
 
 ; =============================================================================
 ; CIA2 Complete Setup
 ; =============================================================================
-    lda #0x7f
-    sta 0xdd0d
-    lda #0x00
-    sta 0xdd0e
-    sta 0xdd0f
+    LDA #$7F
+    STA $DD0D
+    LDA #$00
+    STA $DD0E
+    STA $DD0F
 
-    lda CIA2_DATA+2
-    sta 0xdd02
-    lda CIA2_DATA+3
-    sta 0xdd03
-    lda CIA2_DATA+0
-    sta 0xdd00
-    lda CIA2_DATA+1
-    sta 0xdd01
+    LDA cia2_data+2
+    STA $DD02
+    LDA cia2_data+3
+    STA $DD03
+    LDA cia2_data+0
+    STA $DD00
+    LDA cia2_data+1
+    STA $DD01
 
-    lda CIA2_DATA+16
-    sta 0xdd04
-    lda CIA2_DATA+17
-    sta 0xdd05
-    lda #0x10
-    sta 0xdd0e
-    lda #0x00
-    sta 0xdd0e
-    lda CIA2_DATA+4
-    sta 0xdd04
-    lda CIA2_DATA+5
-    sta 0xdd05
+    LDA cia2_data+16
+    STA $DD04
+    LDA cia2_data+17
+    STA $DD05
+    LDA #$10
+    STA $DD0E
+    LDA #$00
+    STA $DD0E
+    LDA cia2_data+4
+    STA $DD04
+    LDA cia2_data+5
+    STA $DD05
 
-    lda CIA2_DATA+18
-    sta 0xdd06
-    lda CIA2_DATA+19
-    sta 0xdd07
-    lda #0x10
-    sta 0xdd0f
-    lda #0x00
-    sta 0xdd0f
-    lda CIA2_DATA+6
-    sta 0xdd06
-    lda CIA2_DATA+7
-    sta 0xdd07
+    LDA cia2_data+18
+    STA $DD06
+    LDA cia2_data+19
+    STA $DD07
+    LDA #$10
+    STA $DD0F
+    LDA #$00
+    STA $DD0F
+    LDA cia2_data+6
+    STA $DD06
+    LDA cia2_data+7
+    STA $DD07
 
-    lda CIA2_DATA+11
-    sta 0xdd0b
-    lda CIA2_DATA+10
-    sta 0xdd0a
-    lda CIA2_DATA+9
-    sta 0xdd09
-    lda CIA2_DATA+8
-    sta 0xdd08
+    LDA cia2_data+11
+    STA $DD0B
+    LDA cia2_data+10
+    STA $DD0A
+    LDA cia2_data+9
+    STA $DD09
+    LDA cia2_data+8
+    STA $DD08
 
-    lda CIA2_DATA+12
-    sta 0xdd0c
-    lda CIA2_DATA+14
-    and #0xfe
-    sta 0xdd0e
-    lda CIA2_DATA+15
-    and #0xfe
-    sta 0xdd0f
+    LDA cia2_data+12
+    STA $DD0C
+    LDA cia2_data+14
+    AND #$FE
+    STA $DD0E
+    LDA cia2_data+15
+    AND #$FE
+    STA $DD0F
 
 ; =============================================================================
 ; Decompress Zero Page
 ; =============================================================================
-    lda #<ZP_DATA
-    sta LZSA_SRC_LO
-    lda #>ZP_DATA
-    sta LZSA_SRC_HI
-    lda #0x02
-    sta LZSA_DST_LO
-    lda #0x00
-    sta LZSA_DST_HI
-    jsr DECOMPRESS_LZSA1
+    LDA #<zp_data
+    STA LZSA_SRC_LO
+    LDA #>zp_data
+    STA LZSA_SRC_HI
+    LDA #$02
+    STA LZSA_DST_LO
+    LDA #$00
+    STA LZSA_DST_HI
+    JSR decompress_lzsa1
 
     ; Switch to RAM-only mode
-    lda #0x34
-    sta 0x01
+    LDA #$34
+    STA $01
 
     ; Calculate RAM data block size
-    lda #<RAM_DATA_SIZE
-    sta 0xF8
-    lda #>RAM_DATA_SIZE
-    sta 0xF9
+    LDA #<RAM_DATA_SIZE
+    STA $F8
+    LDA #>RAM_DATA_SIZE
+    STA $F9
 
     ; Set source to end of RAM data
-    lda #<(RAM_DATA_END-1)
-    sta 0xFE
-    lda #>(RAM_DATA_END-1)
-    sta 0xFF
+    LDA #<(RAM_DATA_END-1)
+    STA $FE
+    LDA #>(RAM_DATA_END-1)
+    STA $FF
 
     ; Set destination to top of memory
-    lda #0xFF
-    sta 0xFC
-    sta 0xFD
+    LDA #$FF
+    STA $FC
+    STA $FD
 
     ; Copy RAM data block to top of memory (backward)
-    ldy #0x00
+    LDY #$00
 MVLP:
-    lda (0xFE),y
-    sta (0xFC),y
-    lda 0xFE
-    bne MV1
-    dec 0xFF
+    LDA ($FE),Y
+    STA ($FC),Y
+    LDA $FE
+    BNE MV1
+    DEC $FF
 MV1:
-    dec 0xFE
-    lda 0xFC
-    bne MV2
-    dec 0xFD
+    DEC $FE
+    LDA $FC
+    BNE MV2
+    DEC $FD
 MV2:
-    dec 0xFC
-    lda 0xF8
-    bne MV3
-    dec 0xF9
+    DEC $FC
+    LDA $F8
+    BNE MV3
+    DEC $F9
 MV3:
-    dec 0xF8
-    lda 0xF8
-    ora 0xF9
-    bne MVLP
+    DEC $F8
+    LDA $F8
+    ORA $F9
+    BNE MVLP
 
     ; Copy relocated decompressor to $0100-$01FF
-    ldx #<(0x10000 - RAM_DATA_SIZE)
-    ldy #>(0x10000 - RAM_DATA_SIZE)
-    stx 0xFE
-    sty 0xFF
-    ldy #0x00
+    LDX #<($10000 - RAM_DATA_SIZE)
+    LDY #>($10000 - RAM_DATA_SIZE)
+    STX $FE
+    STY $FF
+    LDY #$00
 CPLP:
-    lda (0xFE),y
-    sta 0x0100,y
-    iny
-    cpy #<RELOCATED_SIZE
-    bne CPLP
+    LDA ($FE),Y
+    STA $0100,Y
+    INY
+    CPY #<RELOCATED_SIZE
+    BNE CPLP
 
     ; Setup source pointer for final RAM decompression
-    lda #<(0x10000 - RAM_DATA_SIZE + RELOCATED_SIZE)
-    sta LZSA_SRC_LO
-    lda #>(0x10000 - RAM_DATA_SIZE + RELOCATED_SIZE)
-    sta LZSA_SRC_HI
+    LDA #<($10000 - RAM_DATA_SIZE + RELOCATED_SIZE)
+    STA LZSA_SRC_LO
+    LDA #>($10000 - RAM_DATA_SIZE + RELOCATED_SIZE)
+    STA LZSA_SRC_HI
 
     ; Setup destination pointer
-    lda #0x00
-    sta LZSA_DST_LO
-    lda #0x02
-    sta LZSA_DST_HI
+    LDA #$00
+    STA LZSA_DST_LO
+    LDA #$02
+    STA LZSA_DST_HI
 
     ; Jump to relocated decompressor
-    jmp 0x0100
+    JMP $0100
 
 ; =============================================================================
 ; Data section
 ; =============================================================================
-COLOR_DATA:
+color_data:
     .incbin "{}/color.lzsa"
-VIC_DATA:
+vic_data:
     .incbin "{}/vic.lzsa"
-SID_DATA:
+sid_data:
     .incbin "{}/sid.lzsa"
-CIA1_DATA:
+cia1_data:
     .incbin "{}/cia1.bin"
-CIA2_DATA:
+cia2_data:
     .incbin "{}/cia2.bin"
-ZP_DATA:
+zp_data:
     .incbin "{}/zp.lzsa"
 
-RAM_DATA_START:
-RELOCATED_CODE:
+ram_data_start:
+relocated_code:
     .incbin "{}/relocated.bin"
-RELOCATED_END:
-.equ RELOCATED_SIZE, RELOCATED_END-RELOCATED_CODE
+relocated_end:
+RELOCATED_SIZE = relocated_end-relocated_code
 
-RAM_COMPRESSED:
+ram_compressed:
     .incbin "{}/ram.lzsa"
-RAM_DATA_END:
-.equ RAM_DATA_SIZE, RAM_DATA_END-RAM_DATA_START
+ram_data_end:
+RAM_DATA_SIZE = ram_data_end-ram_data_start
+RAM_DATA_END = ram_data_end
 
 ; =============================================================================
 ; LZSA1 Decompressor
 ; =============================================================================
-DECOMPRESS_LZSA1:
-    ldy #0
-    ldx #0
+decompress_lzsa1:
+    LDY #0
+    LDX #0
 
 cp_length:
-    lda (LZSA_SRC_LO),y
-    inc LZSA_SRC_LO
-    bne cp_skip0
-    inc LZSA_SRC_HI
+    LDA (LZSA_SRC_LO),Y
+    INC LZSA_SRC_LO
+    BNE cp_skip0
+    INC LZSA_SRC_HI
 
 cp_skip0:
-    sta LZSA_CMDBUF
-    and #0x70
-    lsr a
-    beq lz_offset
-    lsr a
-    lsr a
-    lsr a
-    cmp #0x07
-    bcc cp_got_len
-    jsr get_length
-    stx cp_npages+1
+    STA LZSA_CMDBUF
+    AND #$70
+    LSR
+    BEQ lz_offset
+    LSR
+    LSR
+    LSR
+    CMP #$07
+    BCC cp_got_len
+    JSR get_length
+    STX cp_npages+1
 
 cp_got_len:
-    tax
+    TAX
 
 cp_byte:
-    lda (LZSA_SRC_LO),y
-    sta (LZSA_DST_LO),y
-    inc LZSA_SRC_LO
-    bne cp_skip1
-    inc LZSA_SRC_HI
+    LDA (LZSA_SRC_LO),Y
+    STA (LZSA_DST_LO),Y
+    INC LZSA_SRC_LO
+    BNE cp_skip1
+    INC LZSA_SRC_HI
 cp_skip1:
-    inc LZSA_DST_LO
-    bne cp_skip2
-    inc LZSA_DST_HI
+    INC LZSA_DST_LO
+    BNE cp_skip2
+    INC LZSA_DST_HI
 cp_skip2:
-    dex
-    bne cp_byte
+    DEX
+    BNE cp_byte
 cp_npages:
-    lda #0
-    beq lz_offset
-    dec cp_npages+1
-    bcc cp_byte
+    LDA #0
+    BEQ lz_offset
+    DEC cp_npages+1
+    BCC cp_byte
 
 lz_offset:
-    lda (LZSA_SRC_LO),y
-    inc LZSA_SRC_LO
-    bne offset_lo
-    inc LZSA_SRC_HI
+    LDA (LZSA_SRC_LO),Y
+    INC LZSA_SRC_LO
+    BNE offset_lo
+    INC LZSA_SRC_HI
 
 offset_lo:
-    sta LZSA_OFFSET+0
+    STA LZSA_OFFSET+0
 
-    lda #0xFF
-    bit LZSA_CMDBUF
-    bpl offset_hi
+    LDA #$FF
+    BIT LZSA_CMDBUF
+    BPL offset_hi
 
-    lda (LZSA_SRC_LO),y
-    inc LZSA_SRC_LO
-    bne offset_hi
-    inc LZSA_SRC_HI
+    LDA (LZSA_SRC_LO),Y
+    INC LZSA_SRC_LO
+    BNE offset_hi
+    INC LZSA_SRC_HI
 
 offset_hi:
-    sta LZSA_OFFSET+1
+    STA LZSA_OFFSET+1
 
 lz_length:
-    lda LZSA_CMDBUF
-    and #0x0F
-    adc #0x03
-    cmp #0x12
-    bcc got_lz_len
-    jsr get_length
+    LDA LZSA_CMDBUF
+    AND #$0F
+    ADC #$03
+    CMP #$12
+    BCC got_lz_len
+    JSR get_length
 
 got_lz_len:
-    inx
-    eor #0xFF
-    tay
-    eor #0xFF
+    INX
+    EOR #$FF
+    TAY
+    EOR #$FF
 
 get_lz_dst:
-    adc LZSA_DST_LO
-    sta LZSA_DST_LO
-    iny
-    bcs get_lz_win
-    beq get_lz_win
-    dec LZSA_DST_HI
+    ADC LZSA_DST_LO
+    STA LZSA_DST_LO
+    INY
+    BCS get_lz_win
+    BEQ get_lz_win
+    DEC LZSA_DST_HI
 
 get_lz_win:
-    clc
-    adc LZSA_OFFSET+0
-    sta LZSA_WINPTR+0
-    lda LZSA_DST_HI
-    adc LZSA_OFFSET+1
-    sta LZSA_WINPTR+1
+    CLC
+    ADC LZSA_OFFSET+0
+    STA LZSA_WINPTR+0
+    LDA LZSA_DST_HI
+    ADC LZSA_OFFSET+1
+    STA LZSA_WINPTR+1
 
 lz_byte:
-    lda (LZSA_WINPTR),y
-    sta (LZSA_DST_LO),y
-    iny
-    bne lz_byte
-    inc LZSA_DST_HI
-    dex
-    bne lz_more
-    jmp cp_length
+    LDA (LZSA_WINPTR),Y
+    STA (LZSA_DST_LO),Y
+    INY
+    BNE lz_byte
+    INC LZSA_DST_HI
+    DEX
+    BNE lz_more
+    JMP cp_length
 
 lz_more:
-    inc LZSA_WINPTR+1
-    bne lz_byte
+    INC LZSA_WINPTR+1
+    LDY #$00
+    BEQ lz_byte
 
 get_length:
-    clc
-    adc (LZSA_SRC_LO),y
-    inc LZSA_SRC_LO
-    bne skip_inc
-    inc LZSA_SRC_HI
+    CLC
+    ADC (LZSA_SRC_LO),Y
+    INC LZSA_SRC_LO
+    BNE skip_inc
+    INC LZSA_SRC_HI
 
 skip_inc:
-    bcc got_length
-    clc
-    tax
+    BCC got_length
+    CLC
+    TAX
 
 extra_byte:
-    jsr get_byte
-    pha
-    txa
-    beq extra_word
+    JSR get_byte
+    PHA
+    TXA
+    BEQ extra_word
 
 check_length:
-    pla
-    bne got_length
-    dex
+    PLA
+    BNE got_length
+    DEX
 got_length:
-    rts
+    RTS
 
 extra_word:
-    jsr get_byte
-    tax
-    bne check_length
+    JSR get_byte
+    TAX
+    BNE check_length
 
 finished:
-    pla
-    pla
-    pla
-    rts
+    PLA
+    PLA
+    PLA
+    RTS
 
 get_byte:
-    lda (LZSA_SRC_LO),y
-    inc LZSA_SRC_LO
-    bne got_byte
-    inc LZSA_SRC_HI
+    LDA (LZSA_SRC_LO),Y
+    INC LZSA_SRC_LO
+    BNE got_byte
+    INC LZSA_SRC_HI
 got_byte:
-    rts
-"#, work, work, work, work, work, work, work, work)
+    RTS
+"#, work_path, work_path, work_path, work_path, work_path, work_path, work_path, work_path)
     }
 
     fn generate_relocated_decompressor(&self) -> String {
-        format!(r#"
-.org 0x0100
+        format!(r#"*=$0100
 
-.equ LZSA_SRC_LO, 0xFC
-.equ LZSA_SRC_HI, 0xFD
-.equ LZSA_DST_LO, 0xFE
-.equ LZSA_DST_HI, 0xFF
-.equ LZSA_CMDBUF, 0xF9
-.equ LZSA_WINPTR, 0xFA
-.equ LZSA_OFFSET, 0xFA
+LZSA_SRC_LO = $FC
+LZSA_SRC_HI = $FD
+LZSA_DST_LO = $FE
+LZSA_DST_HI = $FF
+LZSA_CMDBUF = $F9
+LZSA_WINPTR = $FA
+LZSA_OFFSET = $FA
 
 ; Relocated LZSA1 decompressor in page 1
 DECOMPRESS_LZSA1:
-    ldy #0
-    ldx #0
+    LDY #0
+    LDX #0
 
 cp_length:
-    lda (LZSA_SRC_LO),y
-    inc LZSA_SRC_LO
-    bne cp_skip0
-    inc LZSA_SRC_HI
+    LDA (LZSA_SRC_LO),Y
+    INC LZSA_SRC_LO
+    BNE cp_skip0
+    INC LZSA_SRC_HI
 
 cp_skip0:
-    sta LZSA_CMDBUF
-    and #0x70
-    lsr a
-    beq lz_offset
-    lsr a
-    lsr a
-    lsr a
-    cmp #0x07
-    bcc cp_got_len
-    jsr get_length
-    stx cp_npages+1
+    STA LZSA_CMDBUF
+    AND #$70
+    LSR
+    BEQ lz_offset
+    LSR
+    LSR
+    LSR
+    CMP #$07
+    BCC cp_got_len
+    JSR get_length
+    STX cp_npages+1
 
 cp_got_len:
-    tax
+    TAX
 
 cp_byte:
-    lda (LZSA_SRC_LO),y
-    sta (LZSA_DST_LO),y
-    inc LZSA_SRC_LO
-    bne cp_skip1
-    inc LZSA_SRC_HI
+    LDA (LZSA_SRC_LO),Y
+    STA (LZSA_DST_LO),Y
+    INC LZSA_SRC_LO
+    BNE cp_skip1
+    INC LZSA_SRC_HI
 cp_skip1:
-    inc LZSA_DST_LO
-    bne cp_skip2
-    inc LZSA_DST_HI
+    INC LZSA_DST_LO
+    BNE cp_skip2
+    INC LZSA_DST_HI
 cp_skip2:
-    dex
-    bne cp_byte
+    DEX
+    BNE cp_byte
 cp_npages:
-    lda #0
-    beq lz_offset
-    dec cp_npages+1
-    bcc cp_byte
+    LDA #0
+    BEQ lz_offset
+    DEC cp_npages+1
+    BCC cp_byte
 
 lz_offset:
-    lda (LZSA_SRC_LO),y
-    inc LZSA_SRC_LO
-    bne offset_lo
-    inc LZSA_SRC_HI
+    LDA (LZSA_SRC_LO),Y
+    INC LZSA_SRC_LO
+    BNE offset_lo
+    INC LZSA_SRC_HI
 
 offset_lo:
-    sta LZSA_OFFSET+0
+    STA LZSA_OFFSET+0
 
-    lda #0xFF
-    bit LZSA_CMDBUF
-    bpl offset_hi
+    LDA #$FF
+    BIT LZSA_CMDBUF
+    BPL offset_hi
 
-    lda (LZSA_SRC_LO),y
-    inc LZSA_SRC_LO
-    bne offset_hi
-    inc LZSA_SRC_HI
+    LDA (LZSA_SRC_LO),Y
+    INC LZSA_SRC_LO
+    BNE offset_hi
+    INC LZSA_SRC_HI
 
 offset_hi:
-    sta LZSA_OFFSET+1
+    STA LZSA_OFFSET+1
 
 lz_length:
-    lda LZSA_CMDBUF
-    and #0x0F
-    adc #0x03
-    cmp #0x12
-    bcc got_lz_len
-    jsr get_length
+    LDA LZSA_CMDBUF
+    AND #$0F
+    ADC #$03
+    CMP #$12
+    BCC got_lz_len
+    JSR get_length
 
 got_lz_len:
-    inx
-    eor #0xFF
-    tay
-    eor #0xFF
+    INX
+    EOR #$FF
+    TAY
+    EOR #$FF
 
 get_lz_dst:
-    adc LZSA_DST_LO
-    sta LZSA_DST_LO
-    iny
-    bcs get_lz_win
-    beq get_lz_win
-    dec LZSA_DST_HI
+    ADC LZSA_DST_LO
+    STA LZSA_DST_LO
+    INY
+    BCS get_lz_win
+    BEQ get_lz_win
+    DEC LZSA_DST_HI
 
 get_lz_win:
-    clc
-    adc LZSA_OFFSET+0
-    sta LZSA_WINPTR+0
-    lda LZSA_DST_HI
-    adc LZSA_OFFSET+1
-    sta LZSA_WINPTR+1
+    CLC
+    ADC LZSA_OFFSET+0
+    STA LZSA_WINPTR+0
+    LDA LZSA_DST_HI
+    ADC LZSA_OFFSET+1
+    STA LZSA_WINPTR+1
 
 lz_byte:
-    lda (LZSA_WINPTR),y
-    sta (LZSA_DST_LO),y
-    iny
-    bne lz_byte
-    inc LZSA_DST_HI
-    dex
-    bne lz_more
-    jmp cp_length
+    LDA (LZSA_WINPTR),Y
+    STA (LZSA_DST_LO),Y
+    INY
+    BNE lz_byte
+    INC LZSA_DST_HI
+    DEX
+    BNE lz_more
+    JMP cp_length
 
 lz_more:
-    inc LZSA_WINPTR+1
-    bne lz_byte
+    INC LZSA_WINPTR+1
+    BNE lz_byte
 
 get_length:
-    clc
-    adc (LZSA_SRC_LO),y
-    inc LZSA_SRC_LO
-    bne skip_inc
-    inc LZSA_SRC_HI
+    CLC
+    ADC (LZSA_SRC_LO),Y
+    INC LZSA_SRC_LO
+    BNE skip_inc
+    INC LZSA_SRC_HI
 
 skip_inc:
-    bcc got_length
-    clc
-    tax
+    BCC got_length
+    CLC
+    TAX
 
 extra_byte:
-    jsr get_byte
-    pha
-    txa
-    beq extra_word
+    JSR get_byte
+    PHA
+    TXA
+    BEQ extra_word
 
 check_length:
-    pla
-    bne got_length
-    dex
+    PLA
+    BNE got_length
+    DEX
 got_length:
-    rts
+    RTS
 
 extra_word:
-    jsr get_byte
-    tax
-    bne check_length
+    JSR get_byte
+    TAX
+    BNE check_length
 
 finished:
     ; Decompression complete - jump to block 9
-    jmp 0x{:04X}
+    JMP ${:04X}
 
 get_byte:
-    lda (LZSA_SRC_LO),y
-    inc LZSA_SRC_LO
-    bne got_byte
-    inc LZSA_SRC_HI
+    LDA (LZSA_SRC_LO),Y
+    INC LZSA_SRC_LO
+    BNE got_byte
+    INC LZSA_SRC_HI
 got_byte:
-    rts
+    RTS
 "#, self.block9_addr)
     }
 }
