@@ -1,0 +1,30 @@
+# .cargo/config.toml
+
+# Windows MSVC - bruk dynamisk CRT (FLTK forventer dette)
+[target.x86_64-pc-windows-msvc]
+# Bruker standard dynamisk CRT
+
+[target.i686-pc-windows-msvc]
+# Bruker standard dynamisk CRT
+
+[target.aarch64-pc-windows-msvc]
+# Bruker standard dynamisk CRT
+
+# Linux - statisk linking med musl
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# Linux - standard glibc (kan også være statisk hvis ønskelig)
+[target.x86_64-unknown-linux-gnu]
+# Kan legge til "-C", "target-feature=+crt-static" hvis du vil statisk på glibc
+rustflags = []
+
+# macOS - statisk der det er mulig
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -5,11 +5,7 @@
   This installer creates the following structure:
   Program Files\vice-snapshot-to-prg-converter\
   ├── vice-snapshot-to-prg-converter.exe
-  ├── vcruntime140.dll (only if VC++ Redistributable not installed)
-  └── util\
-      ├── vasm6502_std.exe
-      ├── lzsa.exe
-      └── LICENSE files
+  └── vcruntime140.dll (only if VC++ Redistributable not installed)
 -->
 
 <?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
@@ -87,67 +83,6 @@
                             KeyPath="yes"/>
                     </Component>
 
-                    <!-- Util directory for external utilities -->
-                    <Directory Id="UtilFolder" Name="util">
-                        <!-- VASM assembler -->
-                        <Component Id="VasmUtility" Guid="*">
-                            <File
-                                Id="VasmExe"
-                                Name="vasm6502_std.exe"
-                                DiskId="1"
-                                Source="external-utils\vasm6502_std.exe"
-                                KeyPath="yes"/>
-                        </Component>
-
-                        <!-- LZSA compressor -->
-                        <Component Id="LzsaUtility" Guid="*">
-                            <File
-                                Id="LzsaExe"
-                                Name="lzsa.exe"
-                                DiskId="1"
-                                Source="external-utils\lzsa.exe"
-                                KeyPath="yes"/>
-                        </Component>
-
-                        <!-- LICENSE files -->
-                        <Component Id="LicenseLzsa" Guid="*">
-                            <File
-                                Id="LicenseLzsaFile"
-                                Name="LICENSE-lzsa"
-                                DiskId="1"
-                                Source="external-utils\LICENSE-lzsa"
-                                KeyPath="yes"/>
-                        </Component>
-
-                        <Component Id="LicenseVasm" Guid="*">
-                            <File
-                                Id="LicenseVasmFile"
-                                Name="LICENSE-vasm"
-                                DiskId="1"
-                                Source="external-utils\LICENSE-vasm"
-                                KeyPath="yes"/>
-                        </Component>
-
-                        <Component Id="LicenseCc0" Guid="*">
-                            <File
-                                Id="LicenseCc0File"
-                                Name="LICENSE.cc0.md"
-                                DiskId="1"
-                                Source="external-utils\LICENSE.cc0.md"
-                                KeyPath="yes"/>
-                        </Component>
-
-                        <Component Id="LicenseZlib" Guid="*">
-                            <File
-                                Id="LicenseZlibFile"
-                                Name="LICENSE.zlib.md"
-                                DiskId="1"
-                                Source="external-utils\LICENSE.zlib.md"
-                                KeyPath="yes"/>
-                        </Component>
-
-                    </Directory>
-
                 </Directory>
             </Directory>
 
@@ -197,7 +132,7 @@
         <Feature
             Id="Complete"
             Title="VICE Snapshot to PRG Converter"
-            Description="Complete installation of VICE Snapshot to PRG Converter with all utilities."
+            Description="Complete installation of VICE Snapshot to PRG Converter."
             Level="1"
             ConfigurableDirectory="APPLICATIONFOLDER"
             AllowAdvertise="no"
@@ -207,14 +142,6 @@
             <!-- Main application -->
             <ComponentRef Id="MainExecutable"/>
             <ComponentRef Id="VCRuntime"/>
-
-            <!-- Utilities -->
-            <ComponentRef Id="VasmUtility"/>
-            <ComponentRef Id="LzsaUtility"/>
-            <ComponentRef Id="LicenseLzsa"/>
-            <ComponentRef Id="LicenseVasm"/>
-            <ComponentRef Id="LicenseCc0"/>
-            <ComponentRef Id="LicenseZlib"/>
 
             <!-- Shortcuts -->
             <Feature
@@ -232,8 +159,8 @@
         <Property Id="ARPURLINFOABOUT" Value="https://github.com/tommyo123/Vice_Snapshot_to_PRG/"/>
         <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
 
-        <!-- Product icon (you can create one and uncomment this) -->
-        <!-- <Icon Id="ProductICO" SourceFile="wix\Product.ico"/> -->
+        <!-- Product icon -->
+        <Icon Id="ProductICO" SourceFile="res\VICE-SNAPSHOT-TO-PRG-CONVERTER.ICO"/>
 
         <UI>
             <!-- Use InstallDir UI instead of FeatureTree to allow directory selection -->

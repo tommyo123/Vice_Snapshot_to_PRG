@@ -10,10 +10,8 @@
 use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
-use std::process::Command;
+use lzsa_sys::{compress_with_options, Options, Version, Mode, Quality};
 use crate::config::Config;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 
 /* ======================= Snapshot structures ======================= */
 
@@ -301,23 +299,23 @@ impl ParseVSF {
     }
 
     pub fn compress_lzsa(&self, in_path: &str, out_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let lzsa_exe = format!("{}/lzsa.exe", self.config.util_str());
+        // Read input file
+        let input_data = fs::read(in_path)?;
 
-        let mut command = Command::new(&lzsa_exe);
-        command
-            .arg("-r")
-            .arg(in_path)
-            .arg(out_path);
+        // Configure LZSA1 with raw mode (no frame header)
+        let options = Options {
+            version: Version::V1,
+            mode: Mode::RawForward,  // Raw block, no frame header
+            quality: Quality::Ratio,
+            min_match_size: 3,
+        };
 
-        #[cfg(windows)]
-        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        // Compress using lzsa-sys
+        let compressed = compress_with_options(&input_data, &options)
+            .map_err(|e| format!("LZSA compression failed: {}", e))?;
 
-        let output = command.output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("LZSA compression failed: {}", stderr).into());
-        }
+        // Write compressed data to output file
+        fs::write(out_path, &compressed)?;
 
         Ok(())
     }
