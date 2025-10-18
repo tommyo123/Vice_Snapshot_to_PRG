@@ -16,6 +16,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -382,6 +385,8 @@ jobs:
     needs: [build-windows, build-linux, build-macos]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.inputs.create_release == 'true'
+    permissions:
+      contents: write
     steps:
       - name: Set version
         id: version
