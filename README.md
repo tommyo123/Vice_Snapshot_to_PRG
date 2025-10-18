@@ -14,16 +14,22 @@ The concept is inspired by the classic **Action Replay cartridge's "BACKUP" feat
 - **Efficient compression**: Uses LZSA1 compression algorithm for fast decompression and good compression ratios
 - **Self-contained PRG files**: No special cartridge or loader required—just load and run
 - **Small decompression footprint**: Minimal memory overhead with intelligent free-space detection
-- **GUI application**: Easy-to-use graphical interface for Windows
+- **GUI application**: Easy-to-use graphical interface
+- **CLI tool**: Command-line version for automation and batch processing
 
 ## Download
 
 **Latest release:** [Download from GitHub Releases](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
 
-The release package includes:
-- Windows installer (.msi) with automatic setup
-- Portable .zip file for manual installation
-- All required utilities (VASM assembler and LZSA compressor)
+### Windows
+- **MSI Installer** (recommended): Installs both GUI and CLI with shortcuts
+- **Portable ZIP**: Extract and run anywhere, no installation required
+
+### Linux
+- **tar.gz**: Pre-compiled binaries for Ubuntu 24.04+, Debian 12+, and compatible distributions
+
+### macOS
+- **tar.gz**: Pre-compiled binaries (untested, no access to Mac hardware)
 
 ### Security Warning on Download
 
@@ -44,16 +50,29 @@ Alternatively, you can build from source to verify the code yourself.
 
 ## System Requirements
 
+### Windows
 **Tested on:**
 - Windows 11 (64-bit)
 
 **Expected to work on:**
-- Windows 7, 8, 10 (64-bit) - based on toolchain compatibility
+- Windows 7, 8, 10 (64-bit)
 - Visual C++ Redistributable 2015-2022 or bundled runtime
 
 **Not supported:**
 - 32-bit Windows
 - Windows XP/Vista
+
+### Linux
+**Tested on:**
+- Ubuntu 24.04
+
+**Expected to work on:**
+- Debian 12+
+- Other modern distributions with compatible glibc
+
+### macOS
+**Untested:**
+- macOS binaries are provided but not verified on actual hardware
 
 ## Important Limitations
 
@@ -75,11 +94,13 @@ reset
 **Why is this necessary?**  
 The converter relies on finding large contiguous blocks of identical byte values in RAM to place its restoration code and data. Without this memory initialization, there may not be enough suitable free space, causing the conversion to fail.
 
-### Avoid "Smart Attach"
+### Avoid "Smart Attach" (Unless Configured)
 
-**Do not use VICE's "Smart attach..." feature** when loading programs before taking a snapshot.
+**Do not use VICE's "Smart attach..." feature** when loading programs before taking a snapshot, unless VICE is configured to initialize memory to zeros on reset.
 
-Smart attach can leave memory in a fragmented state without sufficient contiguous free blocks, which will likely cause the converter to fail with allocation errors. Instead, use standard `LOAD "*",8,1` commands or manual file loading.
+Smart attach can leave memory in a fragmented state without sufficient contiguous free blocks, which will likely cause the converter to fail with allocation errors. Instead:
+- Use standard `LOAD "*",8,1` commands or manual file loading, or
+- Configure VICE to initialize memory to zeros on reset (Settings → Settings → C64 → RAM reset pattern → All zeros), then you can use smart attach safely
 
 ### Stack Pointer Placement Considerations
 
@@ -103,6 +124,8 @@ This tool uses **LZSA1** (Lempel-Ziv-Style Algorithm), a modern byte-aligned com
 - **Good compression ratio**: Better than LZ4 while maintaining excellent decompression speed
 - **Simple decompression code**: Small memory footprint, critical for fitting within C64 constraints
 - **Far superior to Action Replay's RLE**: Much more efficient than the simple Run-Length Encoding used by Action Replay cartridges
+
+The LZSA compression is powered by **Emmanuel Marty's LZSA algorithm**, integrated through a custom Rust wrapper library.
 
 ### Memory Layout Strategy
 
@@ -134,51 +157,50 @@ The restoration process works in stages:
     - Builds RTI frame on stack with original PC and status
     - Loads final A, X, Y registers and executes RTI to resume at original PC
 
-## Dependencies
+### Assembly and Compression
 
-This converter relies on two external programs, both included in the distribution:
+The converter uses:
+- **[asm6502](https://github.com/tommyo123/asm6502)**: An embedded Rust 6502 assembler library for generating restoration code
+- **[lzsa-sys](https://github.com/tommyo123/lzsa-sys)**: A Rust wrapper around Emmanuel Marty's LZSA compression code
 
-### 1. VASM (vasm6502_std.exe)
-A 6502 assembler used to compile the restoration code embedded in the PRG file.
-
-- **Developer**: Volker Barthelmann and Frank Wille
-- **License**: Freely distributable (see VASM documentation)
-- **Purpose**: Assembles the 6502 machine code for snapshot restoration
-
-### 2. LZSA (lzsa.exe)
-The LZSA compression utility that compresses the memory segments.
-
-- **Developer**: Emmanuel Marty
-- **License**: Open source (see LZSA repository)
-- **Purpose**: Compresses memory data using LZSA1 algorithm
-
-**These programs are not developed by the author of this converter** but are redistributed under their respective open-source licenses for convenience. Full credit goes to their respective authors.
+Both are integrated directly into the converter, eliminating the need for external tools.
 
 ## Installation
 
-### Using the Installer (Recommended)
+### Windows - Using the Installer (Recommended)
 
 1. Download the latest `.msi` installer from the [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
 2. Run the installer and follow the on-screen instructions
 3. The installer will:
-    - Install the program to `Program Files\vice-snapshot-to-prg-converter\`
+    - Install to `Program Files\vice-snapshot-to-prg-converter\` (customizable)
+    - Include both GUI and CLI versions
     - Create desktop and Start Menu shortcuts
-    - Include all required utilities in the `util` folder
     - Bundle Visual C++ runtime if not already installed
 
-### Manual Installation (Portable)
+### Windows - Portable Installation
 
 1. Download the latest `.zip` package from the [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
 2. Extract to a directory of your choice
-3. Ensure the `util` folder (containing `vasm6502_std.exe` and `lzsa.exe`) is in the same directory as the converter executable
-4. Run `vice-snapshot-to-prg-converter.exe`
+3. Run either:
+    - `vice-snapshot-to-prg-converter.exe` (GUI)
+    - `vice-snapshot-to-prg-converter-cli.exe` (CLI)
+
+### Linux / macOS
+
+1. Download the appropriate `.tar.gz` from the [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
+2. Extract: `tar -xzf vice-snapshot-to-prg-converter-*.tar.gz`
+3. Make executable: `chmod +x vice-snapshot-to-prg-converter*`
+4. Run either:
+    - `./vice-snapshot-to-prg-converter` (GUI)
+    - `./vice-snapshot-to-prg-converter-cli input.vsf output.prg` (CLI)
 
 The converter will automatically:
-- Find the `util` folder next to the executable
 - Create temporary work directories in your system temp folder
 - Clean up all temporary files after conversion
 
 ## Usage
+
+### GUI Version
 
 1. **Prepare your program in VICE 3.9 x64sc:**
    ```
@@ -188,7 +210,7 @@ The converter will automatically:
    x (exit monitor)
    ```
 
-2. **Load your program normally** (avoid "Smart attach...")
+2. **Load your program normally** (avoid "Smart attach..." unless configured for zero memory)
 
 3. **Take a snapshot:**
     - File → Save snapshot image
@@ -204,6 +226,31 @@ The converter will automatically:
     - Transfer the resulting PRG file to your C64 via disk, SD card reader, or other means
     - `LOAD "yourfile.prg",8,1` (or device 8)
     - `RUN`
+
+### CLI Version
+
+The command-line version is perfect for automation and batch processing:
+
+```bash
+# Basic usage
+vice-snapshot-to-prg-converter-cli input.vsf output.prg
+
+# Show help
+vice-snapshot-to-prg-converter-cli --help
+```
+
+**Note:** The CLI version automatically overwrites output files without prompting.
+
+**Windows example:**
+```cmd
+cd "C:\Program Files\vice-snapshot-to-prg-converter"
+vice-snapshot-to-prg-converter-cli.exe snapshot.vsf output.prg
+```
+
+**Linux/macOS example:**
+```bash
+./vice-snapshot-to-prg-converter-cli snapshot.vsf output.prg
+```
 
 The program will restore the complete machine state and resume execution exactly where the snapshot was taken.
 
@@ -231,19 +278,28 @@ The code is released openly in the spirit of the retro computing community, wher
 ## Building from Source
 
 Requirements:
-- Rust toolchain (edition 2021 or later)
-- FLTK dependencies for your platform
+- Rust toolchain (edition 2024 or later)
+- Platform-specific dependencies:
+    - **Windows**: Visual Studio build tools or MinGW
+    - **Linux**: X11, Cairo, Pango, and FLTK dependencies
+    - **macOS**: Xcode command-line tools
 
 Build commands:
 ```bash
+# Build both GUI and CLI (release)
+cargo build --release
+
+# Build only GUI
+cargo build --release --bin vice-snapshot-to-prg-converter
+
+# Build only CLI
+cargo build --release --bin vice-snapshot-to-prg-converter-cli
+
 # Debug build
 cargo build
-
-# Release build (no console window on Windows)
-cargo build --release
 ```
 
-The release build will create a Windows executable without a console window. For other platforms, adjust as needed.
+The release build creates optimized binaries in `target/release/`.
 
 ## Known Issues and Troubleshooting
 
@@ -262,13 +318,22 @@ This can happen if:
 ### VICE version mismatch
 If you get parsing errors or corrupted output, verify you're using **VICE 3.9 x64sc** for both creating the snapshot and (if testing in emulator) loading the resulting PRG.
 
+### Linux: Missing library errors
+If you get "error while loading shared libraries", install the required dependencies:
+```bash
+# Ubuntu/Debian
+sudo apt-get install libx11-6 libxext6 libxft2 libxinerama1 libcairo2 libpango-1.0-0
+
+# The pre-built binaries are compiled on Ubuntu 24.04
+# For older distributions, build from source
+```
+
 ## Credits
 
 **Converter Development**: Tommy Olsen
 
-**External Tools**:
-- **VASM 6502 Assembler**: Volker Barthelmann and Frank Wille
-- **LZSA Compression**: Emmanuel Marty
+**Compression Algorithm**:
+- **LZSA**: Emmanuel Marty - Fast compression specifically designed for 8-bit systems
 
 **Inspiration**:
 - Action Replay cartridge series by Datel Electronics
