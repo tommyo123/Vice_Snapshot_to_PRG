@@ -20,9 +20,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-release:
+  # Windows build (MSI + Portable)
+  build-windows:
     runs-on: windows-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,10 +36,8 @@ jobs:
             $fullVersion = "${{ github.ref_name }}"
           }
           
-          # Remove 'v' prefix if present
           $fullVersion = $fullVersion -replace '^v', ''
           
-          # Extract numeric version for WiX (x.x.x format)
           if ($fullVersion -match '^(\d+\.\d+\.\d+)') {
             $wixVersion = $matches[1] + '.0'
           } else {
@@ -75,36 +73,18 @@ jobs:
             wix\main.wxs
           light.exe -nologo -ext WixUIExtension -ext WixUtilExtension `
             -sval -spdb `
-            -out vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64.msi `
+            -out vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64-windows.msi `
             main.wixobj
 
       - name: Create Portable Package
         run: |
-          # Create package folder
           New-Item -ItemType Directory -Force -Path portable-package
-          New-Item -ItemType Directory -Force -Path portable-package\util
           
-          # Copy executable
           Copy-Item target\release\vice-snapshot-to-prg-converter.exe portable-package\
-          
-          # Copy VC++ runtime
           Copy-Item external-utils\vcruntime140.dll portable-package\
-          
-          # Copy utilities
-          Copy-Item external-utils\vasm6502_std.exe portable-package\util\
-          Copy-Item external-utils\lzsa.exe portable-package\util\
-          
-          # Copy licenses
-          Copy-Item external-utils\LICENSE-lzsa portable-package\util\
-          Copy-Item external-utils\LICENSE-vasm portable-package\util\
-          Copy-Item external-utils\LICENSE.cc0.md portable-package\util\
-          Copy-Item external-utils\LICENSE.zlib.md portable-package\util\
-          
-          # Copy documentation
           Copy-Item README.md portable-package\
           Copy-Item CHANGELOG.md portable-package\
           
-          # Create portable README
           @"
           VICE Snapshot to PRG Converter - Portable Edition
           ==================================================
@@ -119,7 +99,6 @@ jobs:
           3. Done!
           
           The program will:
-          - Use the "util" folder next to the .exe for tools
           - Create temporary files in your system's temp folder
           - Not write anything to registry or Program Files
           
@@ -136,45 +115,186 @@ jobs:
           https://github.com/tommyo123/Vice_Snapshot_to_PRG
           "@ | Out-File -FilePath portable-package\README-PORTABLE.txt -Encoding UTF8
           
-          # Create ZIP
           Compress-Archive -Force -Path portable-package\* `
-            -DestinationPath vice-snapshot-to-prg-converter-${{ env.VERSION }}-portable.zip
+            -DestinationPath vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64-windows-portable.zip
 
-      - name: Upload Build Artifacts (for testing)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts-${{ env.VERSION }}
+          name: windows-release
           path: |
-            vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64.msi
-            vice-snapshot-to-prg-converter-${{ env.VERSION }}-portable.zip
+            vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64-windows.msi
+            vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64-windows-portable.zip
           retention-days: 7
 
+  # Linux build (tar.gz)
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Build Release
+        run: cargo build --release --verbose
+
+      - name: Create tar.gz package
+        run: |
+          mkdir -p package
+          cp target/release/vice-snapshot-to-prg-converter package/
+          cp README.md package/
+          cp CHANGELOG.md package/
+          
+          cat > package/README-LINUX.txt << 'EOF'
+          VICE Snapshot to PRG Converter - Linux Edition
+          ===============================================
+          
+          Version: ${{ env.VERSION }}
+          
+          HOW TO USE:
+          1. Extract this archive
+          2. Make the binary executable: chmod +x vice-snapshot-to-prg-converter
+          3. Run: ./vice-snapshot-to-prg-converter
+          
+          The program will create temporary files in /tmp/ViceSnapshotConvert.*
+          
+          For full documentation, see README.md or visit:
+          https://github.com/tommyo123/Vice_Snapshot_to_PRG
+          EOF
+          
+          cd package
+          tar -czf ../vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64-linux.tar.gz *
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64-linux.tar.gz
+          retention-days: 7
+
+  # macOS build (tar.gz)
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Build Release
+        run: cargo build --release --verbose
+
+      - name: Create tar.gz package
+        run: |
+          mkdir -p package
+          cp target/release/vice-snapshot-to-prg-converter package/
+          cp README.md package/
+          cp CHANGELOG.md package/
+          
+          cat > package/README-MACOS.txt << 'EOF'
+          VICE Snapshot to PRG Converter - macOS Edition
+          ===============================================
+          
+          Version: ${{ env.VERSION }}
+          
+          HOW TO USE:
+          1. Extract this archive
+          2. Make the binary executable: chmod +x vice-snapshot-to-prg-converter
+          3. Run: ./vice-snapshot-to-prg-converter
+          
+          If you get a security warning, go to System Preferences > Security & Privacy
+          and allow the application to run.
+          
+          The program will create temporary files in /tmp/ViceSnapshotConvert.*
+          
+          For full documentation, see README.md or visit:
+          https://github.com/tommyo123/Vice_Snapshot_to_PRG
+          EOF
+          
+          cd package
+          tar -czf ../vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64-macos.tar.gz *
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64-macos.tar.gz
+          retention-days: 7
+
+  # Create GitHub Release
+  create-release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.inputs.create_release == 'true'
+    steps:
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
       - name: Create Release
-        if: github.event_name == 'push' || github.event.inputs.create_release == 'true'
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64.msi
-            vice-snapshot-to-prg-converter-${{ env.VERSION }}-portable.zip
+            windows-release/*
+            linux-release/*
+            macos-release/*
           body: |
             ## VICE Snapshot to PRG Converter ${{ env.VERSION }}
             
             ### Installation Options
             
-            **MSI Installer (Recommended):**
-            - Installs to Program Files
-            - Creates desktop and Start Menu shortcuts
-            - Automatic VC++ runtime handling
-            - Download: `vice-snapshot-to-prg-converter-${{ env.VERSION }}-x86_64.msi`
+            **Windows:**
+            - **MSI Installer (Recommended):** Installs to Program Files with Start Menu shortcuts
+            - **Portable ZIP:** Extract and run anywhere, no installation required
             
-            **Portable ZIP:**
-            - No installation required
-            - Extract and run anywhere
-            - Perfect for USB sticks or custom paths
-            - Download: `vice-snapshot-to-prg-converter-${{ env.VERSION }}-portable.zip`
+            **Linux:**
+            - **tar.gz:** Extract and run the binary directly
             
-            ### Security Warning
+            **macOS:**
+            - **tar.gz:** Extract and run the binary directly
+            
+            ### Windows Security Warning
             
             Windows may show a SmartScreen warning because the installer is not code-signed.
             This is normal for unsigned software. Click "More info" → "Run anyway".

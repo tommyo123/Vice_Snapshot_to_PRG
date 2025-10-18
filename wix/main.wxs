@@ -171,12 +171,6 @@
             <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
         </UI>
 
-        <!-- Custom banner (493 x 58 pixels) -->
-        <!-- <WixVariable Id="WixUIBannerBmp" Value="wix\Banner.bmp"/> -->
-
-        <!-- Custom dialog image (493 x 312 pixels) -->
-        <!-- <WixVariable Id="WixUIDialogBmp" Value="wix\Dialog.bmp"/> -->
-
     </Product>
 
 </Wix>
