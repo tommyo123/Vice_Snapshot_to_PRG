@@ -10,9 +10,14 @@
 [target.aarch64-pc-windows-msvc]
 # Bruker standard dynamisk CRT
 
-# Linux - bruk system linker (gcc) i stedet for lld
+# Linux - bruk system linker (gcc) og legg til library paths
 [target.x86_64-unknown-linux-gnu]
 linker = "gcc"
+rustflags = [
+    "-L", "/usr/lib/x86_64-linux-gnu",
+    "-L", "/usr/lib",
+    "-L", "/lib/x86_64-linux-gnu",
+]
 
 # Linux - statisk linking med musl
 [target.x86_64-unknown-linux-musl]
