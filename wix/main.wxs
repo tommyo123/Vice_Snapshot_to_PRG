@@ -7,13 +7,12 @@
   ├── vice-snapshot-to-prg-converter.exe (GUI)
   ├── vice-snapshot-to-prg-converter-cli.exe (CLI)
   └── vcruntime140.dll (only if VC++ Redistributable not installed)
--->
 
-<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
-    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
-<?else ?>
-    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
-<?endif ?>
+  Shortcuts created:
+  - Desktop: VICE Snapshot to PRG Converter (GUI)
+  - Start Menu: VICE Snapshot to PRG Converter (GUI)
+  - CLI accessible via command line from installation directory
+-->
 
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 
@@ -35,6 +34,7 @@
             Compressed="yes"
             InstallScope="perMachine"
             SummaryCodepage="1252"
+            Platform="x64"
             />
 
         <MajorUpgrade
@@ -60,7 +60,7 @@
         <SetProperty Id="ARPINSTALLLOCATION" Value="[APPLICATIONFOLDER]" After="CostFinalize"/>
 
         <Directory Id="TARGETDIR" Name="SourceDir">
-            <Directory Id="$(var.PlatformProgramFilesFolder)" Name="PFiles">
+            <Directory Id="ProgramFiles64Folder" Name="PFiles">
                 <Directory Id="APPLICATIONFOLDER" Name="vice-snapshot-to-prg-converter">
 
                     <!-- Main GUI executable -->
@@ -125,16 +125,8 @@
                         <Shortcut
                             Id="ApplicationStartMenuShortcut"
                             Name="VICE Snapshot to PRG Converter"
-                            Description="Convert VICE snapshots to C64 PRG files (GUI)"
+                            Description="Convert VICE snapshots to C64 PRG files"
                             Target="[APPLICATIONFOLDER]vice-snapshot-to-prg-converter.exe"
-                            WorkingDirectory="APPLICATIONFOLDER"/>
-                        <!-- CLI shortcut (opens in Command Prompt) -->
-                        <Shortcut
-                            Id="CliStartMenuShortcut"
-                            Name="VICE Snapshot to PRG Converter (Command Prompt)"
-                            Description="Open Command Prompt in the installation folder"
-                            Target="[System64Folder]cmd.exe"
-                            Arguments="/K cd /d &quot;[APPLICATIONFOLDER]&quot; &amp;&amp; echo VICE Snapshot to PRG Converter (CLI) &amp;&amp; echo. &amp;&amp; echo Usage: vice-snapshot-to-prg-converter-cli.exe input.vsf output.prg &amp;&amp; echo Type --help for more information &amp;&amp; echo."
                             WorkingDirectory="APPLICATIONFOLDER"/>
                         <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall"/>
                         <RegistryValue
