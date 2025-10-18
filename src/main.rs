@@ -279,6 +279,28 @@ fn main() {
                 return;
             }
 
+            // Check if output file exists and ask for confirmation
+            if Path::new(&output_path).exists() {
+                let choice = dialog::choice2_default(
+                    &format!("The output file already exists:\n\n{}\n\nDo you want to overwrite it?", output_path),
+                    "Cancel",
+                    "Overwrite",
+                    ""
+                );
+
+                if choice != Some(1) {
+                    status_buffer.borrow_mut().set_text("Conversion cancelled by user.");
+                    return;
+                }
+
+                // Try to delete the existing file
+                if let Err(e) = std::fs::remove_file(&output_path) {
+                    let msg = format!("✗ Error: Failed to delete existing file:\n{}", e);
+                    status_buffer.borrow_mut().set_text(&msg);
+                    return;
+                }
+            }
+
             // Disable convert button during processing
             btn.deactivate();
             status_buffer.borrow_mut().set_text("Converting snapshot image...\n");
@@ -367,7 +389,7 @@ fn show_help_window() {
 This program is unlicensed and dedicated to the public domain.
 Developed by Tommy Olsen.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+═══════════════════════════════════════════════════════════
 
 OVERVIEW
 
@@ -378,7 +400,7 @@ The PRG file will restore the complete machine state including CPU
 registers, memory, VIC-II graphics, SID audio, CIA timers, and
 zero page exactly as it was when the snapshot was taken.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+═══════════════════════════════════════════════════════════
 
 QUICK START
 
@@ -400,7 +422,7 @@ QUICK START
    LOAD "yourfile.prg",8,1
    RUN
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+═══════════════════════════════════════════════════════════
 
 IMPORTANT LIMITATIONS
 
@@ -409,7 +431,7 @@ IMPORTANT LIMITATIONS
 • Do NOT use "Smart attach..." feature in VICE
 • Some edge cases with unusual stack configurations may fail
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+═══════════════════════════════════════════════════════════
 
 For complete documentation, see README.md in the installation
 directory or visit: https://github.com/tommyo123/Vice_Snapshot_to_PRG

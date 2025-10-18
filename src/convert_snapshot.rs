@@ -32,6 +32,11 @@ impl ConvertSnapshot {
     /// * `Ok(())` on success
     /// * `Err(String)` with user-friendly error message on failure
     pub fn convert(&self, input_path: &str, output_path: &str) -> Result<(), String> {
+        // Check if output file already exists
+        if std::path::Path::new(output_path).exists() {
+            return Err(format!("Output file already exists:\n{}\n\nPlease choose a different filename or delete the existing file first.", output_path));
+        }
+
         // Parse VSF snapshot
         let parser = ParseVSF::import(input_path, &self.config)
             .map_err(|e| format!("Failed to read VSF file: {}", e))?;

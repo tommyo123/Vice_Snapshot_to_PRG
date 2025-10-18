@@ -276,6 +276,4 @@ If you get parsing errors or corrupted output, verify you're using **VICE 3.9 x6
 
 ## License
 
-This program is **unlicensed** and dedicated to the **public domain**.
-
-You are free to use, modify, and distribute this software for any purpose without restriction.
+This software is released under the CC0 1.0 Universal Public Domain Dedication. You are free to use, copy, modify, and distribute it for any purpose without restrictions or attribution. See https://creativecommons.org/publicdomain/zero/1.0/ for details.
