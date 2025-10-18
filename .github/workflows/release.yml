@@ -58,22 +58,6 @@ jobs:
           Write-Host "Full version: $fullVersion"
           Write-Host "WiX version: $wixVersion"
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libx11-dev \
-            libxext-dev \
-            libxft-dev \
-            libxinerama-dev \
-            libxcursor-dev \
-            libxrender-dev \
-            libxfixes-dev \
-            libpango1.0-dev \
-            libgl1-mesa-dev \
-            libglu1-mesa-dev \
-            libcairo2-dev
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
