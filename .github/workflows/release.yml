@@ -64,7 +64,7 @@ jobs:
           toolchain: stable
 
       - name: Build Release
-        run: cargo build --release --verbose
+        run: cargo build --release
 
       - name: Install WiX Toolset
         run: |
@@ -200,7 +200,7 @@ jobs:
           toolchain: stable
 
       - name: Build Release
-        run: cargo build --release --verbose
+        run: cargo build --release
 
       - name: Create tar.gz package
         run: |
@@ -267,7 +267,7 @@ jobs:
           toolchain: stable
 
       - name: Build Release
-        run: cargo build --release --verbose
+        run: cargo build --release
 
       - name: Create tar.gz package
         run: |
