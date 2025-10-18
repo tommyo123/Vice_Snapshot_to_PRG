@@ -63,12 +63,6 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Set library paths
-        run: |
-          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
-          echo "LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LIBRARY_PATH" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-
       - name: Build Release
         run: cargo build --release --verbose
 
@@ -91,7 +85,6 @@ jobs:
       - name: Create Portable Package
         run: |
           New-Item -ItemType Directory -Force -Path portable-package
-          
           Copy-Item target\release\vice-snapshot-to-prg-converter.exe portable-package\
           Copy-Item external-utils\vcruntime140.dll portable-package\
           Copy-Item README.md portable-package\
@@ -163,6 +156,43 @@ jobs:
           VERSION="${VERSION#v}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libx11-dev \
+            libxext-dev \
+            libxft-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxrender-dev \
+            libxfixes-dev \
+            libpango1.0-dev \
+            libpangoxft-1.0-0 \
+            libglib2.0-dev \
+            libcairo2-dev \
+            libfontconfig1-dev \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev
+
+      - name: Verify library installation
+        run: |
+          echo "=== System library directories ==="
+          ls -la /usr/lib/x86_64-linux-gnu/ | grep -E "libX11|libXext|libcairo|libpango|libfont" || true
+          echo ""
+          echo "=== pkg-config check ==="
+          pkg-config --libs x11 || echo "x11.pc not found"
+          pkg-config --libs cairo || echo "cairo.pc not found"
+          pkg-config --libs pango || echo "pango.pc not found"
+
+      - name: Set library paths
+        run: |
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LIBRARY_PATH" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
