@@ -5,14 +5,6 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod parse_vsf;
-mod make_prg_asm;
-mod asm_wrapper;
-mod config;
-mod find_ram;
-mod patch_mem;
-mod convert_snapshot;
-
 use fltk::{prelude::*, *};
 use fltk::button::Button;
 use fltk::dialog::NativeFileChooser;
@@ -26,8 +18,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::Path;
 
-use config::{Config, VERSION};
-use convert_snapshot::ConvertSnapshot;
+use vice_snapshot_to_prg_converter::config::{Config, VERSION};
+use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 
 const WINDOW_WIDTH: i32 = 720;
 const WINDOW_HEIGHT: i32 = 580;

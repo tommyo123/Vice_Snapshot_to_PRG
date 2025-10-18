@@ -4,7 +4,8 @@
 
   This installer creates the following structure:
   Program Files\vice-snapshot-to-prg-converter\
-  ├── vice-snapshot-to-prg-converter.exe
+  ├── vice-snapshot-to-prg-converter.exe (GUI)
+  ├── vice-snapshot-to-prg-converter-cli.exe (CLI)
   └── vcruntime140.dll (only if VC++ Redistributable not installed)
 -->
 
@@ -62,13 +63,23 @@
             <Directory Id="$(var.PlatformProgramFilesFolder)" Name="PFiles">
                 <Directory Id="APPLICATIONFOLDER" Name="vice-snapshot-to-prg-converter">
 
-                    <!-- Main executable -->
+                    <!-- Main GUI executable -->
                     <Component Id="MainExecutable" Guid="*">
                         <File
                             Id="MainExe"
                             Name="vice-snapshot-to-prg-converter.exe"
                             DiskId="1"
                             Source="$(var.CargoTargetBinDir)\vice-snapshot-to-prg-converter.exe"
+                            KeyPath="yes"/>
+                    </Component>
+
+                    <!-- CLI executable -->
+                    <Component Id="CliExecutable" Guid="*">
+                        <File
+                            Id="CliExe"
+                            Name="vice-snapshot-to-prg-converter-cli.exe"
+                            DiskId="1"
+                            Source="$(var.CargoTargetBinDir)\vice-snapshot-to-prg-converter-cli.exe"
                             KeyPath="yes"/>
                     </Component>
 
@@ -86,7 +97,7 @@
                 </Directory>
             </Directory>
 
-            <!-- Desktop shortcut -->
+            <!-- Desktop shortcut (GUI only) -->
             <Directory Id="DesktopFolder" Name="Desktop">
                 <Component Id="DesktopShortcut" Guid="B8F4C3D2-8E9A-4F1B-9C2D-3E4F5A6B7C8D">
                     <Shortcut
@@ -110,11 +121,20 @@
             <Directory Id="ProgramMenuFolder">
                 <Directory Id="ApplicationProgramsFolder" Name="VICE Snapshot to PRG Converter">
                     <Component Id="StartMenuShortcuts" Guid="C9F5D4E3-9F0B-5A2C-AD3E-4F5A6B7C8D9E">
+                        <!-- GUI shortcut -->
                         <Shortcut
                             Id="ApplicationStartMenuShortcut"
                             Name="VICE Snapshot to PRG Converter"
-                            Description="Convert VICE snapshots to C64 PRG files"
+                            Description="Convert VICE snapshots to C64 PRG files (GUI)"
                             Target="[APPLICATIONFOLDER]vice-snapshot-to-prg-converter.exe"
+                            WorkingDirectory="APPLICATIONFOLDER"/>
+                        <!-- CLI shortcut (opens in Command Prompt) -->
+                        <Shortcut
+                            Id="CliStartMenuShortcut"
+                            Name="VICE Snapshot to PRG Converter (Command Prompt)"
+                            Description="Open Command Prompt in the installation folder"
+                            Target="[System64Folder]cmd.exe"
+                            Arguments="/K cd /d &quot;[APPLICATIONFOLDER]&quot; &amp;&amp; echo VICE Snapshot to PRG Converter (CLI) &amp;&amp; echo. &amp;&amp; echo Usage: vice-snapshot-to-prg-converter-cli.exe input.vsf output.prg &amp;&amp; echo Type --help for more information &amp;&amp; echo."
                             WorkingDirectory="APPLICATIONFOLDER"/>
                         <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall"/>
                         <RegistryValue
@@ -141,6 +161,7 @@
 
             <!-- Main application -->
             <ComponentRef Id="MainExecutable"/>
+            <ComponentRef Id="CliExecutable"/>
             <ComponentRef Id="VCRuntime"/>
 
             <!-- Shortcuts -->

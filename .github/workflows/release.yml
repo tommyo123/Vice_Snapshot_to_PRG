@@ -63,8 +63,16 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Build Release
+      - name: Build Release (Both GUI and CLI)
         run: cargo build --release
+
+      - name: Verify CLI binary exists
+        run: |
+          if (-not (Test-Path "target\release\vice-snapshot-to-prg-converter-cli.exe")) {
+            Write-Error "CLI binary not found!"
+            exit 1
+          }
+          Write-Host "✓ CLI binary found"
 
       - name: Install WiX Toolset
         run: |
@@ -86,6 +94,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path portable-package
           Copy-Item target\release\vice-snapshot-to-prg-converter.exe portable-package\
+          Copy-Item target\release\vice-snapshot-to-prg-converter-cli.exe portable-package\
           Copy-Item external-utils\vcruntime140.dll portable-package\
           Copy-Item README.md portable-package\
           Copy-Item CHANGELOG.md portable-package\
@@ -98,10 +107,23 @@ jobs:
           
           This is a portable version that requires no installation.
           
-          HOW TO USE:
+          INCLUDED FILES:
+          - vice-snapshot-to-prg-converter.exe     (GUI version)
+          - vice-snapshot-to-prg-converter-cli.exe (Command-line version)
+          - vcruntime140.dll                       (Runtime library)
+          - README.md                              (Documentation)
+          - CHANGELOG.md                           (Version history)
+          
+          HOW TO USE (GUI):
           1. Extract this ZIP file to any folder you like
           2. Run vice-snapshot-to-prg-converter.exe
           3. Done!
+          
+          HOW TO USE (CLI):
+          1. Open Command Prompt or PowerShell
+          2. Navigate to the extracted folder
+          3. Run: vice-snapshot-to-prg-converter-cli.exe input.vsf output.prg
+          4. For help: vice-snapshot-to-prg-converter-cli.exe --help
           
           The program will:
           - Create temporary files in your system's temp folder
@@ -199,13 +221,22 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Build Release
+      - name: Build Release (Both GUI and CLI)
         run: cargo build --release
+
+      - name: Verify CLI binary exists
+        run: |
+          if [ ! -f "target/release/vice-snapshot-to-prg-converter-cli" ]; then
+            echo "Error: CLI binary not found!"
+            exit 1
+          fi
+          echo "✓ CLI binary found"
 
       - name: Create tar.gz package
         run: |
           mkdir -p package
           cp target/release/vice-snapshot-to-prg-converter package/
+          cp target/release/vice-snapshot-to-prg-converter-cli package/
           cp README.md package/
           cp CHANGELOG.md package/
           
@@ -215,10 +246,25 @@ jobs:
           
           Version: ${{ env.VERSION }}
           
-          HOW TO USE:
+          INCLUDED FILES:
+          - vice-snapshot-to-prg-converter     (GUI version)
+          - vice-snapshot-to-prg-converter-cli (Command-line version)
+          - README.md                          (Documentation)
+          - CHANGELOG.md                       (Version history)
+          
+          HOW TO USE (GUI):
           1. Extract this archive
           2. Make the binary executable: chmod +x vice-snapshot-to-prg-converter
           3. Run: ./vice-snapshot-to-prg-converter
+          
+          HOW TO USE (CLI):
+          1. Extract this archive
+          2. Make the binary executable: chmod +x vice-snapshot-to-prg-converter-cli
+          3. Run: ./vice-snapshot-to-prg-converter-cli input.vsf output.prg
+          4. For help: ./vice-snapshot-to-prg-converter-cli --help
+          
+          QUICK SETUP:
+          chmod +x vice-snapshot-to-prg-converter*
           
           The program will create temporary files in /tmp/ViceSnapshotConvert.*
           
@@ -266,13 +312,22 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Build Release
+      - name: Build Release (Both GUI and CLI)
         run: cargo build --release
+
+      - name: Verify CLI binary exists
+        run: |
+          if [ ! -f "target/release/vice-snapshot-to-prg-converter-cli" ]; then
+            echo "Error: CLI binary not found!"
+            exit 1
+          fi
+          echo "✓ CLI binary found"
 
       - name: Create tar.gz package
         run: |
           mkdir -p package
           cp target/release/vice-snapshot-to-prg-converter package/
+          cp target/release/vice-snapshot-to-prg-converter-cli package/
           cp README.md package/
           cp CHANGELOG.md package/
           
@@ -282,11 +337,27 @@ jobs:
           
           Version: ${{ env.VERSION }}
           
-          HOW TO USE:
+          INCLUDED FILES:
+          - vice-snapshot-to-prg-converter     (GUI version)
+          - vice-snapshot-to-prg-converter-cli (Command-line version)
+          - README.md                          (Documentation)
+          - CHANGELOG.md                       (Version history)
+          
+          HOW TO USE (GUI):
           1. Extract this archive
           2. Make the binary executable: chmod +x vice-snapshot-to-prg-converter
           3. Run: ./vice-snapshot-to-prg-converter
           
+          HOW TO USE (CLI):
+          1. Extract this archive
+          2. Make the binary executable: chmod +x vice-snapshot-to-prg-converter-cli
+          3. Run: ./vice-snapshot-to-prg-converter-cli input.vsf output.prg
+          4. For help: ./vice-snapshot-to-prg-converter-cli --help
+          
+          QUICK SETUP:
+          chmod +x vice-snapshot-to-prg-converter*
+          
+          SECURITY WARNING:
           If you get a security warning, go to System Preferences > Security & Privacy
           and allow the application to run.
           
@@ -339,14 +410,32 @@ jobs:
             ### Installation Options
             
             **Windows:**
-            - **MSI Installer (Recommended):** Installs to Program Files with Start Menu shortcuts
-            - **Portable ZIP:** Extract and run anywhere, no installation required
+            - **MSI Installer (Recommended):** Installs both GUI and CLI to Program Files with Start Menu shortcuts
+            - **Portable ZIP:** Extract and run anywhere, includes both GUI and CLI
             
             **Linux:**
-            - **tar.gz:** Extract and run the binary directly
+            - **tar.gz:** Extract and run the binaries directly (includes both GUI and CLI)
             
             **macOS:**
-            - **tar.gz:** Extract and run the binary directly
+            - **tar.gz:** Extract and run the binaries directly (includes both GUI and CLI)
+            
+            ### What's Included
+            
+            All packages now include:
+            - **GUI version:** `vice-snapshot-to-prg-converter` - User-friendly graphical interface
+            - **CLI version:** `vice-snapshot-to-prg-converter-cli` - Command-line tool for automation and scripting
+            
+            ### CLI Usage
+            
+            ```bash
+            # Convert a snapshot
+            vice-snapshot-to-prg-converter-cli input.vsf output.prg
+            
+            # Show help
+            vice-snapshot-to-prg-converter-cli --help
+            ```
+            
+            The CLI version automatically overwrites output files without prompting, making it perfect for batch processing and automation.
             
             ### Windows Security Warning
             

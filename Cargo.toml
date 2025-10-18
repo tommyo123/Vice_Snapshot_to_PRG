@@ -4,6 +4,21 @@ version = "0.9.0"
 edition = "2024"
 authors = ["Tommy Olsen"]
 
+# Expose modules as library so CLI can use them
+[lib]
+name = "vice_snapshot_to_prg_converter"
+path = "src/lib.rs"
+
+# GUI binary (default)
+[[bin]]
+name = "vice-snapshot-to-prg-converter"
+path = "src/main.rs"
+
+# CLI binary
+[[bin]]
+name = "vice-snapshot-to-prg-converter-cli"
+path = "src/cli/main.rs"
+
 [dependencies]
 fltk = { version = "1.4", features = ["fltk-bundled"] }
 asm6502 = { git = "https://github.com/tommyo123/asm6502" }
