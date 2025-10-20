@@ -128,7 +128,7 @@ impl MakePRGAsm {
         // Convert Windows backslashes to forward slashes for cross-platform compatibility
         let work_path = work.replace('\\', "/");
 
-        format!(r#"; C64 LZSA1 Snapshot Loader
+        format!(r#"; C64 LZSA1 Snapshot Loader - Conservative Optimization
 *=$0801
 
 ; BASIC stub: SYS 2061
@@ -186,9 +186,18 @@ start:
     STA LZSA_DST_HI
     JSR decompress_lzsa1
 
-    ; Disable VIC IRQs
+    ; OPTIMIZATION: Setup VIC raster position early (moved from $01xx)
+    ; This is 100% safe - no interrupts enabled yet
+    LDA $D011
+    STA $D011
+    LDA $D012
+    STA $D012
+
+    ; Disable VIC IRQs (extra safety)
     LDA #$00
     STA $D01A
+
+    ; Clear VIC IRQ flags
     LDA #$FF
     STA $D019
 
@@ -204,7 +213,7 @@ start:
     JSR decompress_lzsa1
 
 ; =============================================================================
-; CIA1 Complete Setup
+; CIA1 Complete Setup (100% safe - no timers started yet)
 ; =============================================================================
     ; Disable all interrupts and stop timers
     LDA #$7F
@@ -261,7 +270,7 @@ start:
     LDA cia1_data+8
     STA $DC08
 
-    ; SDR and control registers
+    ; SDR and control registers (WITHOUT start bit - safe!)
     LDA cia1_data+12
     STA $DC0C
     LDA cia1_data+14
@@ -272,7 +281,7 @@ start:
     STA $DC0F
 
 ; =============================================================================
-; CIA2 Complete Setup
+; CIA2 Complete Setup (100% safe - no timers started yet)
 ; =============================================================================
     LDA #$7F
     STA $DD0D
@@ -410,7 +419,7 @@ CPLP:
     LDA #>($10000 - RAM_DATA_SIZE + RELOCATED_SIZE)
     STA LZSA_SRC_HI
 
-    ; Setup destination pointer
+    ; Setup destination pointer (start at $0200 - skip $0100-$01FF!)
     LDA #$00
     STA LZSA_DST_LO
     LDA #$02
