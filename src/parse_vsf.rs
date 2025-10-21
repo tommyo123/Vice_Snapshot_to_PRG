@@ -112,7 +112,7 @@ impl ParseVSF {
     pub fn parse_import_with(&self, cfg: &ParserConfig) -> Result<C64Snapshot, String> {
         let mut cur = Cursor::new(self.raw.as_slice());
 
-        // Parse file header
+        // Read and validate VSF magic header (19 bytes: "VICE Snapshot File\x1A")
         let magic = read_fixed(&mut cur, 19)?;
         if !vsf_magic_ok(&magic) {
             let hint = sniff_compression_prefix(&magic)
@@ -121,20 +121,50 @@ impl ParseVSF {
             return Err(format!("Not a VSF file{}", hint));
         }
 
-        let _vmaj = read_u8(&mut cur)?;
-        let _vmin = read_u8(&mut cur)?;
-        let mach = trim_nul(&read_fixed(&mut cur, 16)?).to_string();
+        // Read snapshot format version (major.minor)
+        let vmaj = read_u8(&mut cur)?;
+        let vmin = read_u8(&mut cur)?;
 
-        if !mach.starts_with("C64") {
-            return Err(format!("Snapshot is '{}', not a C64 variant", mach));
+        // Validate snapshot format version - only 2.0 is supported
+        // Format 2.0 is used by VICE 3.x with x64sc emulator
+        // Older format versions (1.x) have different module structures
+        if vmaj != 2 || vmin != 0 {
+            return Err(format!(
+                "Unsupported snapshot format version {}.{}\n\n\
+             Only snapshot format 2.0 is supported.\n\
+             Your snapshot is format {}.{}.\n\n\
+             Please create a new snapshot using VICE x64sc emulator.",
+                vmaj, vmin, vmaj, vmin
+            ));
         }
 
-        ensure_eq(&read_fixed(&mut cur, 12)?, b"VICE Version", "Corrupt VSF header")?;
-        let _sep = read_u8(&mut cur)?;
-        let _vice_ver = read_fixed(&mut cur, 4)?;
-        let _svn = read_u32(&mut cur)?;
+        // Read machine type (16 bytes, null-terminated string)
+        let mach = trim_nul(&read_fixed(&mut cur, 16)?).to_string();
 
-        // Parse modules
+        // Validate machine type - must be exactly C64SC (x64sc emulator)
+        // C64SC is the cycle-accurate emulator that this converter requires
+        // Other variants (C64, C64C, etc.) have different internal structures
+        if mach != "C64SC" {
+            return Err(format!(
+                "Unsupported machine type '{}'\n\n\
+             Only snapshots from x64sc emulator (C64SC) are supported.\n\
+             Your snapshot is from '{}'.\n\n\
+             Please create a new snapshot using x64sc emulator\n\
+             (not x64, x64dtv, or other variants).",
+                mach, mach
+            ));
+        }
+
+        // Skip VICE version info header (21 bytes total)
+        // We don't validate VICE version - only snapshot format matters
+        // Format: "VICE Version" (12), separator (1), version string (4), SVN revision (4)
+        let _skip1 = read_fixed(&mut cur, 12)?;  // Skip "VICE Version" marker
+        let _skip2 = read_u8(&mut cur)?;          // Skip separator
+        let _skip3 = read_fixed(&mut cur, 4)?;    // Skip version string
+        let _skip4 = read_u32(&mut cur)?;         // Skip SVN revision
+
+        // Initialize optional hardware module storage
+        // VSF files contain multiple named modules, each with their own version and size
         let mut cpu: Option<Cpu6510> = None;
         let mut mem: Option<C64Mem> = None;
         let mut vic: Option<VicII> = None;
@@ -142,29 +172,36 @@ impl ParseVSF {
         let mut cia2: Option<Cia6526> = None;
         let mut sid: Option<Sid6581> = None;
 
+        // Parse all modules until end of file
+        // Each module has: name(16), major(1), minor(1), size(4), payload(size-22)
         while (cur.position() as usize) < self.raw.len() {
+            // Try to read module name (16 bytes, null-terminated)
             let name_raw = match read_fixed_opt(&mut cur, 16) {
                 Some(n) => n,
-                None => break,
+                None => break,  // End of file reached
             };
 
             let name = trim_nul(&name_raw).to_string();
-            let _mmaj = read_u8(&mut cur)?;
-            let _mmin = read_u8(&mut cur)?;
-            let size = read_u32(&mut cur)? as usize;
+            let _mmaj = read_u8(&mut cur)?;     // Module major version
+            let _mmin = read_u8(&mut cur)?;     // Module minor version
+            let size = read_u32(&mut cur)? as usize;  // Total module size including header
 
+            // Calculate payload size (total size minus 22-byte module header)
             let payload_len = size.checked_sub(22)
                 .ok_or_else(|| "Module size corrupt".to_string())?;
             let start = cur.position() as usize;
             let end = start + payload_len;
 
+            // Validate payload doesn't exceed file bounds
             if end > self.raw.len() {
                 return Err(format!("Module '{}' beyond EOF", name));
             }
 
+            // Extract module payload data
             let payload = &self.raw[start..end];
             cur.set_position(end as u64);
 
+            // Parse module based on name
             match name.as_str() {
                 "MAINCPU" => cpu = Some(parse_cpu(payload)?),
                 "C64MEM" => mem = Some(parse_memory(payload)?),
@@ -172,11 +209,11 @@ impl ParseVSF {
                 "CIA1" => cia1 = Some(parse_cia(payload)?),
                 "CIA2" => cia2 = Some(parse_cia(payload)?),
                 "SID" => sid = Some(parse_sid(payload, cfg)?),
-                _ => {}
+                _ => {}  // Ignore unknown modules (e.g., DRIVE, PRINTER, etc.)
             }
         }
 
-        // Validate required modules
+        // Validate that all required modules were found
         let cpu = cpu.ok_or_else(|| "MAINCPU missing".to_string())?;
         validate_cpu(&cpu)?;
 
@@ -186,11 +223,16 @@ impl ParseVSF {
         let cia2 = cia2.ok_or_else(|| "CIA2 missing".to_string())?;
         let sid = sid.ok_or_else(|| "SID missing".to_string())?;
 
-        // Get Color RAM from C64MEM ($D800-$DBFF) instead of VIC module
+        // Extract Color RAM from main memory ($D800-$DBFF) instead of VIC module
+        // The VIC module's color RAM is often unreliable, but main RAM $D800-$DBFF
+        // contains the actual color RAM values that were active during snapshot
         let color_slice = &mem.ram[0xD800..=0xDBFF];
+
+        // Validate color RAM data quality (should be 4-bit values in low nibble)
         let all_low_nibble = color_slice.iter().all(|&b| (b & 0xF0) == 0);
         let count_0 = color_slice.iter().filter(|&&b| b == 0x00).count();
 
+        // Only use main memory color RAM if it looks valid (mostly non-zero, low nibble only)
         if all_low_nibble && count_0 < 900 {
             vic.color_ram = Box::new(
                 color_slice.try_into()
@@ -198,6 +240,7 @@ impl ParseVSF {
             );
         }
 
+        // Return complete snapshot with all hardware state
         Ok(C64Snapshot {
             cpu,
             mem,
@@ -207,7 +250,7 @@ impl ParseVSF {
             sid,
         })
     }
-
+    
     /// Extract components to separate files for compression and assembly
     /// Returns paths: (ram, color, zp, vic, sid, cia1, cia2)
     pub fn extract_ram(&self, snap: &C64Snapshot) -> Result<(String, String, String, String, String, String, String), Box<dyn std::error::Error>> {

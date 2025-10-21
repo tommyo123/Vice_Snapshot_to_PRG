@@ -111,7 +111,7 @@ fn print_usage(program_name: &str) {
     println!("  {} <input.vsf> <output.prg>", name);
     println!();
     println!("DESCRIPTION:");
-    println!("  Converts VICE 3.9 x64sc snapshot files (.vsf) to self-restoring");
+    println!("  Converts VICE 3.6-3.9 x64sc snapshot files (.vsf) to self-restoring");
     println!("  C64 PRG files that run on real Commodore 64 hardware.");
     println!();
     println!("  The output file will be overwritten without prompting if it exists.");

@@ -1,4 +1,4 @@
-//! Converts VICE 3.9 x64sc snapshot images (VSF) to C64 PRG files.
+//! Converts VICE 3.6-3.9 x64sc snapshot images (VSF) to C64 PRG files.
 //!
 //! This program is unlicensed and dedicated to the public domain.
 //! Developed by Tommy Olsen.
@@ -58,7 +58,7 @@ fn main() {
     // Create main window with version number
     let mut window = Window::default()
         .with_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-        .with_label(&format!("VICE 3.9 x64sc Snapshot to PRG Converter v{}", VERSION));
+        .with_label(&format!("VICE 3.6-3.9 x64sc Snapshot to PRG Converter v{}", VERSION));
     window.make_resizable(false);
 
     // Set custom icon
@@ -376,7 +376,7 @@ fn show_help_window() {
     );
 
     let help_text = format!(
-        r#"VICE 3.9 x64sc Snapshot to PRG Converter v{}
+        r#"VICE 3.6-3.9 x64sc Snapshot to PRG Converter v{}
 
 This program is unlicensed and dedicated to the public domain.
 Developed by Tommy Olsen.
@@ -385,7 +385,7 @@ Developed by Tommy Olsen.
 
 OVERVIEW
 
-Converts VICE 3.9 x64sc emulator snapshots (.vsf files) into
+Converts VICE 3.6-3.9 x64sc emulator snapshots (.vsf files) into
 self-restoring PRG files that run on real Commodore 64 hardware.
 
 The PRG file will restore the complete machine state including CPU
@@ -396,7 +396,7 @@ zero page exactly as it was when the snapshot was taken.
 
 QUICK START
 
-1. In VICE 3.9 x64sc monitor (Alt+H), run:
+1. In VICE 3.6-3.9 x64sc monitor (Alt+H), run:
    f 0000 ffff 00
    reset
    x (exit monitor)
@@ -418,7 +418,7 @@ QUICK START
 
 IMPORTANT LIMITATIONS
 
-• Only works with VICE 3.9 x64sc snapshots
+• Only works with VICE 3.6-3.9 x64sc snapshots
 • Memory MUST be initialized before snapshot (f 0000 ffff 00)
 • Do NOT use "Smart attach..." feature in VICE
 • Some edge cases with unusual stack configurations may fail
