@@ -1,6 +1,6 @@
 # VICE Snapshot to PRG Converter
 
-A utility that converts VICE 3.9 x64sc emulator snapshots into self-restoring PRG files that can run on real Commodore 64 hardware.
+A utility that converts VICE 3.6-3.9 x64sc emulator snapshots into self-restoring PRG files that can run on real Commodore 64 hardware.
 
 ## Overview
 
@@ -78,9 +78,9 @@ Alternatively, you can build from source to verify the code yourself.
 
 ### VICE Version Compatibility
 
-**This tool is specifically designed for VICE 3.9 x64sc snapshots only.**
+**This tool is specifically designed for VICE 3.6-3.9 x64sc snapshots only.**
 
-VICE's snapshot format changes frequently between versions. This converter has been developed and tested exclusively against snapshots created by `x64sc.exe` from VICE 3.9. There is **no guarantee** that it will work with snapshots from other VICE versions (earlier or later).
+VICE's snapshot format changes frequently between versions. This converter has been developed and tested exclusively against snapshots created by `x64sc.exe` from VICE 3.6-3.9. There is **no guarantee** that it will work with snapshots from other VICE versions (earlier or later).
 
 ### Required Pre-Snapshot Preparation
 
@@ -202,7 +202,7 @@ The converter will automatically:
 
 ### GUI Version
 
-1. **Prepare your program in VICE 3.9 x64sc:**
+1. **Prepare your program in VICE 3.6-3.9 x64sc:**
    ```
    Enter monitor (Alt+H)
    f 0000 ffff 00
@@ -262,7 +262,7 @@ This is a **hobby project** and **proof-of-concept** developed for fun and educa
 2. To implement a solution inspired by the Action Replay cartridge concept
 3. To experiment with modern compression techniques on vintage hardware
 
-**No guarantees or warranties are provided.** This tool works with VICE 3.9 snapshots, but there is no commitment to support future VICE versions. The snapshot format changes frequently, and maintaining compatibility would require ongoing maintenance that may not be sustainable as a hobby project.
+**No guarantees or warranties are provided.** This tool works with VICE 3.6-3.9 snapshots, but there is no commitment to support future VICE versions. The snapshot format changes frequently, and maintaining compatibility would require ongoing maintenance that may not be sustainable as a hobby project.
 
 ### Open Source
 
@@ -316,7 +316,7 @@ This can happen if:
 - The program modifies memory in ways not captured by the snapshot
 
 ### VICE version mismatch
-If you get parsing errors or corrupted output, verify you're using **VICE 3.9 x64sc** for both creating the snapshot and (if testing in emulator) loading the resulting PRG.
+If you get parsing errors or corrupted output, verify you're using **VICE 3.6-3.9 x64sc** for both creating the snapshot and (if testing in emulator) loading the resulting PRG.
 
 ### Linux: Missing library errors
 If you get "error while loading shared libraries", install the required dependencies:

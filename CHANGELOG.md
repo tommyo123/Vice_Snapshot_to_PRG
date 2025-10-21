@@ -62,7 +62,7 @@ All packages now include both GUI and CLI versions:
 - **macOS tar.gz**: Self-contained binaries (untested on actual hardware)
 
 ### Known Limitations
-- Only supports VICE 3.9 x64sc snapshots
+- Only supports VICE 3.6-3.9 x64sc snapshots
 - Requires memory initialization (`f 0000 ffff 00` + `reset`) before snapshot
 - Stack pointer placement may be risky in edge cases
 - "Smart attach..." should be avoided unless VICE is configured to initialize memory to zeros on reset
@@ -73,7 +73,7 @@ All packages now include both GUI and CLI versions:
 
 ### Added
 - Initial beta release
-- GUI application for converting VICE 3.9 x64sc snapshots to PRG files
+- GUI application for converting VICE 3.6-3.9 x64sc snapshots to PRG files
 - LZSA1 compression for efficient snapshot compression
 - Automatic memory patching and restoration code generation
 - MSI installer with WiX
@@ -82,7 +82,7 @@ All packages now include both GUI and CLI versions:
 - Complete documentation in README.md
 
 ### Known Limitations
-- Only supports VICE 3.9 x64sc snapshots
+- Only supports VICE 3.6-3.9 x64sc snapshots
 - Requires memory initialization (`f 0000 ffff 00` + `reset`) before snapshot
 - Stack pointer placement may be risky in edge cases
 - "Smart attach..." feature in VICE should be avoided
