@@ -23,8 +23,7 @@ pub struct FindRam {
 }
 
 impl FindRam {
-    /// Create a new FindRam instance by scanning RAM from $0200-$FFEF
-    /// Only sequences with 32 or more identical consecutive bytes are tracked
+    /// Scan RAM from $0200-$FFEF for sequences of 32+ identical consecutive bytes
     pub fn new(ram: &[u8; 65536]) -> Self {
         let mut blocks = Vec::new();
 
@@ -38,12 +37,10 @@ impl FindRam {
             let current_value = ram[addr];
             let mut count = 1;
 
-            // Count consecutive identical bytes
             while addr + count <= END_ADDR && ram[addr + count] == current_value {
                 count += 1;
             }
 
-            // Only store sequences of 32 or more
             if count >= MIN_SEQUENCE_LEN {
                 blocks.push(RamBlock {
                     address: addr as u16,
@@ -59,8 +56,7 @@ impl FindRam {
         FindRam { blocks }
     }
 
-    /// Find the maximum contiguous sequence length available
-    /// Returns 0 if no sequences are available
+    /// Find the maximum contiguous sequence length available (0 if none)
     pub fn find_max(&self) -> u16 {
         self.blocks
             .iter()
@@ -69,18 +65,17 @@ impl FindRam {
             .unwrap_or(0)
     }
 
-    /// Allocate a block of the specified size
+    /// Allocate a block of the specified size using best-fit algorithm
     ///
     /// Searches for the smallest available block that fits the requested size.
-    /// If found, the block is either removed (exact match) or split (larger than needed).
+    /// The block is either removed (exact match) or split (larger than needed).
     ///
-    /// Returns Some((address, value)) if allocation succeeds, None if no suitable block exists
+    /// Returns Some((address, value)) on success, None if no suitable block exists
     pub fn allocate(&mut self, requested_count: u16) -> Option<(u16, u8)> {
         if requested_count == 0 {
             return None;
         }
 
-        // Find the best fit: smallest block that can accommodate the request
         let best_match = self.blocks
             .iter()
             .enumerate()
@@ -94,10 +89,8 @@ impl FindRam {
             let remaining_count = block.count - requested_count;
 
             if remaining_count == 0 {
-                // Exact match - remove the block entirely
                 self.blocks.remove(index);
             } else {
-                // Partial allocation - update the block
                 let new_address = block.address + requested_count;
                 self.blocks[index] = RamBlock {
                     address: new_address,
@@ -112,17 +105,14 @@ impl FindRam {
         }
     }
 
-    /// Get total number of available blocks
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
 
-    /// Get total number of free bytes across all blocks
     pub fn total_free_bytes(&self) -> u32 {
         self.blocks.iter().map(|b| b.count as u32).sum()
     }
 
-    /// Get a reference to all blocks (for debugging/inspection)
     pub fn blocks(&self) -> &[RamBlock] {
         &self.blocks
     }

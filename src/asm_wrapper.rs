@@ -16,7 +16,6 @@ pub enum AsmError {
 
 impl From<Asm6502Error> for AsmError {
     fn from(e: Asm6502Error) -> Self {
-        // Extract detailed error information from asm6502 error
         let error_msg = format!("{:?}", e);
         AsmError::Asm(error_msg)
     }
@@ -40,7 +39,6 @@ impl Assembler6502Wrapper {
         match self.assembler.assemble_bytes(src) {
             Ok(bytes) => Ok(bytes),
             Err(e) => {
-                // Try to extract line information from the error and source
                 let error_msg = self.format_assembly_error(&e, src);
                 Err(AsmError::Asm(error_msg))
             }
@@ -62,8 +60,7 @@ impl Assembler6502Wrapper {
     fn format_assembly_error(&self, error: &Asm6502Error, source: &str) -> String {
         let error_string = format!("{:?}", error);
 
-        // Try to extract line information by analyzing the error
-        // Common patterns in asm6502 errors
+        // Match common asm6502 error patterns
         if error_string.contains("Unknown instruction") ||
             error_string.contains("unknown mnemonic") {
             return self.find_error_context(source, &error_string, "instruction");
@@ -96,7 +93,6 @@ impl Assembler6502Wrapper {
         let keyword = self.extract_keyword_from_error(error_msg);
 
         if let Some(kw) = keyword {
-            // Search for the keyword in source
             for (line_num, line) in lines.iter().enumerate() {
                 let line_trimmed = line.trim();
                 if line_trimmed.contains(&kw) && !line_trimmed.starts_with(';') {

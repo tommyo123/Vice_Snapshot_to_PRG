@@ -48,7 +48,6 @@ impl PatchMem {
     pub fn new(snap: &C64Snapshot, ram: &mut [u8; 65536], ram_finder: &mut FindRam) -> Result<Self, PatchError> {
         let sp = snap.cpu.sp;
 
-        // Allocate blocks 1-8 for preserving stack area
         let mut blocks = Vec::new();
         let sizes = [48u16, 40, 32, 32, 32, 32, 32, 32];
 
@@ -65,11 +64,9 @@ impl PatchMem {
             }
         }
 
-        // Preserve $F8-$FF before patching
         let mut f8_ff = [0u8; 8];
         f8_ff.copy_from_slice(&snap.mem.ram[0xF8..=0xFF]);
 
-        // Generate block 9 with placeholder JMP to block 10
         let mut block9_code = Self::generate_block9_final(&blocks, &f8_ff)?;
         let exact_block9_size = block9_code.len() as u16;
 
@@ -79,7 +76,6 @@ impl PatchMem {
             ));
         }
 
-        // Allocate block 9
         let (block9_addr, block9_fill) = match ram_finder.allocate(exact_block9_size) {
             Some((addr, value)) => (addr, value),
             None => {
@@ -89,7 +85,7 @@ impl PatchMem {
             }
         };
 
-        // Generate block 10 FIRST TIME with dummy fill value to get size
+        // Generate block 10 first time with dummy fill value to get size
         let temp_block10_code = Self::generate_block10(snap, block9_addr, exact_block9_size, block9_fill, 0)?;
         let exact_block10_size = temp_block10_code.len() as u16;
 
@@ -99,7 +95,6 @@ impl PatchMem {
             ));
         }
 
-        // Allocate block 10
         let (_block10_addr, block10_fill) = match ram_finder.allocate(exact_block10_size) {
             Some((addr, value)) => (addr, value),
             None => {
@@ -109,11 +104,10 @@ impl PatchMem {
             }
         };
 
-        // Generate block 10 SECOND TIME with correct fill value
+        // Generate block 10 second time with correct fill value
         let mut block10_code = Self::generate_block10(snap, block9_addr, exact_block9_size, block9_fill, exact_block10_size)?;
         let block10_addr = _block10_addr;
 
-        // Generate restore code
         let restore_code = Self::generate_restore_code(snap, block10_addr, exact_block10_size)?;
         let code_len = restore_code.len() as u16;
 
@@ -137,18 +131,16 @@ impl PatchMem {
             ideal_start
         };
 
-        // CRITICAL: Patch JMP addresses
-        // Block 9 → Block 10
+        // Patch JMP addresses: Block 9 → Block 10
         let jmp9_offset = block9_code.len() - 3;
         block9_code[jmp9_offset + 1] = (block10_addr & 0xFF) as u8;
         block9_code[jmp9_offset + 2] = (block10_addr >> 8) as u8;
 
-        // Block 10 → $01xx restore code
+        // Patch JMP addresses: Block 10 → $01xx restore code
         let jmp10_offset = block10_code.len() - 3;
         block10_code[jmp10_offset + 1] = (code_start & 0xFF) as u8;
         block10_code[jmp10_offset + 2] = (code_start >> 8) as u8;
 
-        // Patch restore code into RAM
         let code_start_usize = code_start as usize;
         let code_end_usize = code_start_usize + restore_code.len();
         ram[code_start_usize..code_end_usize].copy_from_slice(&restore_code);
@@ -182,15 +174,12 @@ impl PatchMem {
             ram[addr..addr + 32].copy_from_slice(&temp);
         }
 
-        // Write block 9 (with patched JMP to block 10)
         ram[block9_addr as usize..block9_addr as usize + block9_code.len()]
             .copy_from_slice(&block9_code);
 
-        // Write block 10 (with patched JMP to $01xx)
         ram[block10_addr as usize..block10_addr as usize + block10_code.len()]
             .copy_from_slice(&block10_code);
 
-        // Add blocks to list
         blocks.push(BlockAllocation {
             address: block9_addr,
             original_value: block9_fill,
@@ -226,13 +215,12 @@ impl PatchMem {
             code.extend_from_slice(&[0x85, 0xF8 + i as u8]);
         }
 
-        // Jump to block 10 (placeholder - will be patched)
-        code.extend_from_slice(&[0x4C, 0x00, 0x00]); // JMP $0000
+        code.extend_from_slice(&[0x4C, 0x00, 0x00]); // JMP $0000 (will be patched)
 
         Ok(code)
     }
 
-    /// Generate block 9 core (unchanged)
+    /// Generate block 9 core
     fn generate_block9_core(blocks: &[BlockAllocation]) -> Result<Vec<u8>, PatchError> {
         let mut code = Vec::new();
 
@@ -252,7 +240,6 @@ impl PatchMem {
             code.extend_from_slice(&[0x10, offset]);
         }
 
-        // Restore $FFF0-$FFFF
         code.extend_from_slice(&[0xA2, 0x0F]);
         let loop2 = code.len();
         let addr = blocks[0].address + 32;
@@ -264,7 +251,6 @@ impl PatchMem {
         let offset = ((loop2 as isize) - (code.len() as isize + 2)) as u8;
         code.extend_from_slice(&[0x10, offset]);
 
-        // Clean blocks 1-8
         for i in 0..8 {
             let addr = blocks[i].address;
             let size = blocks[i].size;
@@ -307,53 +293,48 @@ impl PatchMem {
         let mut code = Vec::new();
 
         // CRITICAL: Restore stack pointer FIRST before anything else!
-        code.extend_from_slice(&[0xA2, snap.cpu.sp]); // LDX #SP
+        code.extend_from_slice(&[0xA2, snap.cpu.sp]);
         code.push(0x9A); // TXS
 
-        // Wipe block 9
         if block9_size > 0 && block9_size <= 256 {
-            code.extend_from_slice(&[0xA9, block9_fill]); // LDA #fill
-            code.extend_from_slice(&[0xA2, 0x00]); // LDX #$00
+            code.extend_from_slice(&[0xA9, block9_fill]);
+            code.extend_from_slice(&[0xA2, 0x00]);
             let wipe_loop = code.len();
             code.extend_from_slice(&[
                 0x9D, (block9_addr & 0xFF) as u8, (block9_addr >> 8) as u8
-            ]); // STA block9,X
-            code.push(0xE8); // INX
-            code.extend_from_slice(&[0xE0, block9_size as u8]); // CPX #size
-            code.push(0xD0); // BNE
+            ]);
+            code.push(0xE8);
+            code.extend_from_slice(&[0xE0, block9_size as u8]);
+            code.push(0xD0);
             let offset = ((wipe_loop as isize) - ((code.len() + 1) as isize)) as i8;
             code.push(offset as u8);
         }
 
-        // Restore $00 (CPU port DDR) - SAFE! 99.99% sane values
+        // Restore $00 (CPU port DDR)
         code.extend_from_slice(&[0xA9, snap.mem.cpu_port_dir]);
-        code.extend_from_slice(&[0x85, 0x00]); // STA $00
+        code.extend_from_slice(&[0x85, 0x00]);
 
-        // Build RTI frame (stack is now valid!)
+        // Build RTI frame on stack
         code.extend_from_slice(&[0xA9, (snap.cpu.pc >> 8) as u8]);
-        code.push(0x48); // PHA - PC high
+        code.push(0x48);
         code.extend_from_slice(&[0xA9, (snap.cpu.pc & 0xFF) as u8]);
-        code.push(0x48); // PHA - PC low
+        code.push(0x48);
         code.extend_from_slice(&[0xA9, snap.cpu.p]);
-        code.push(0x48); // PHA - P register
+        code.push(0x48);
 
         // Preload A, X, Y for $01xx
-        // A = 0x00 (fill value for wipe)
-        code.extend_from_slice(&[0xA9, 0x00]); // LDA #$00
+        code.extend_from_slice(&[0xA9, 0x00]); // A = fill value
+        code.extend_from_slice(&[0xA2, snap.mem.cpu_port_data]); // X = CPU port data
 
-        // X = CPU port data (for STX $01 in $01xx)
-        code.extend_from_slice(&[0xA2, snap.mem.cpu_port_data]); // LDX #cpu_port_data
-
-        // Y = correct counter value based on wipe strategy
+        // Y = counter for block 10 wipe
         if block10_size == 256 || block10_size > 128 {
-            code.extend_from_slice(&[0xA0, 0xFF]); // LDY #$FF (for BPL)
+            code.extend_from_slice(&[0xA0, 0xFF]); // use BPL
         } else {
             let counter = block10_size.saturating_sub(1) as u8;
-            code.extend_from_slice(&[0xA0, counter]); // LDY #size-1 (for BNE)
+            code.extend_from_slice(&[0xA0, counter]); // use BNE
         }
 
-        // Jump to $01xx restore code (placeholder - will be patched)
-        code.extend_from_slice(&[0x4C, 0x00, 0x00]); // JMP $0000
+        code.extend_from_slice(&[0x4C, 0x00, 0x00]); // JMP $0000 (will be patched)
 
         Ok(code)
     }
@@ -368,59 +349,48 @@ impl PatchMem {
     ) -> Result<Vec<u8>, PatchError> {
         let mut code = Vec::new();
 
-        // At entry: A=0x00 (fill), X=cpu_port_data, Y=counter (already correct!)
-
-        // Wipe block 10 - Y already has correct value from block 10!
+        // Wipe block 10 using Y preloaded from block 10
         if block10_size == 256 || block10_size > 128 {
-            // Use BPL (Y=$FF from block 10)
             let wipe_loop = code.len();
             code.extend_from_slice(&[
                 0x99, (block10_addr & 0xFF) as u8, (block10_addr >> 8) as u8
-            ]); // STA block10,Y
-            code.push(0x88); // DEY
+            ]);
+            code.push(0x88);
             code.push(0x10); // BPL
             let offset = ((wipe_loop as isize) - ((code.len() + 1) as isize)) as i8;
             code.push(offset as u8);
         } else {
-            // Use BNE (Y=size-1 from block 10)
             let wipe_loop = code.len();
             code.extend_from_slice(&[
                 0x99, (block10_addr & 0xFF) as u8, (block10_addr >> 8) as u8
-            ]); // STA block10,Y
-            code.push(0x88); // DEY
+            ]);
+            code.push(0x88);
             code.push(0xD0); // BNE
             let offset = ((wipe_loop as isize) - ((code.len() + 1) as isize)) as i8;
             code.push(offset as u8);
         }
 
-        // Restore $01 using X (preloaded from block 10!)
-        code.extend_from_slice(&[0x86, 0x01]); // STX $01
+        code.extend_from_slice(&[0x86, 0x01]); // STX $01 (restore CPU port data)
 
-        // VIC IRQ - Disable first
         code.extend_from_slice(&[0xA9, 0x00]);
         code.extend_from_slice(&[0x8D, 0x1A, 0xD0]);
 
-        // Clear VIC IRQ
         code.extend_from_slice(&[0xA9, 0xFF]);
         code.extend_from_slice(&[0x8D, 0x19, 0xD0]);
 
-        // Drain CIA interrupts (CRITICAL!)
+        // Drain CIA interrupts
         code.extend_from_slice(&[0xAD, 0x0D, 0xDC]);
         code.extend_from_slice(&[0xAD, 0x0D, 0xDD]);
 
-        // Clear VIC IRQ again
         code.extend_from_slice(&[0xA9, 0xFF]);
         code.extend_from_slice(&[0x8D, 0x19, 0xD0]);
 
-        // Enable VIC IRQ
         code.extend_from_slice(&[0xA9, snap.vic.registers[0x1A]]);
         code.extend_from_slice(&[0x8D, 0x1A, 0xD0]);
 
-        // Drain CIA again
         code.extend_from_slice(&[0xAD, 0x0D, 0xDC]);
         code.extend_from_slice(&[0xAD, 0x0D, 0xDD]);
 
-        // Enable CIA interrupts if needed
         if snap.cia1.ier != 0 {
             code.extend_from_slice(&[0xA9, snap.cia1.ier | 0x80]);
             code.extend_from_slice(&[0x8D, 0x0D, 0xDC]);
@@ -430,7 +400,6 @@ impl PatchMem {
             code.extend_from_slice(&[0x8D, 0x0D, 0xDD]);
         }
 
-        // Start CIA timers
         code.extend_from_slice(&[0xA9, snap.cia1.cra]);
         code.extend_from_slice(&[0x8D, 0x0E, 0xDC]);
         code.extend_from_slice(&[0xA9, snap.cia1.crb]);
@@ -440,13 +409,12 @@ impl PatchMem {
         code.extend_from_slice(&[0xA9, snap.cia2.crb]);
         code.extend_from_slice(&[0x8D, 0x0F, 0xDD]);
 
-        // Load final X, Y, and A registers (CRITICAL - must be last!)
+        // Load final registers (CRITICAL - must be last!)
         code.extend_from_slice(&[0xA2, snap.cpu.x]);
         code.extend_from_slice(&[0xA0, snap.cpu.y]);
-        code.extend_from_slice(&[0xA9, snap.cpu.a]); // MUST reload A!
+        code.extend_from_slice(&[0xA9, snap.cpu.a]);
 
-        // RTI
-        code.push(0x40);
+        code.push(0x40); // RTI
 
         Ok(code)
     }

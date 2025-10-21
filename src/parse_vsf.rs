@@ -121,7 +121,6 @@ impl ParseVSF {
             return Err(format!("Not a VSF file{}", hint));
         }
 
-        // Read snapshot format version (major.minor)
         let vmaj = read_u8(&mut cur)?;
         let vmin = read_u8(&mut cur)?;
 
@@ -138,7 +137,6 @@ impl ParseVSF {
             ));
         }
 
-        // Read machine type (16 bytes, null-terminated string)
         let mach = trim_nul(&read_fixed(&mut cur, 16)?).to_string();
 
         // Validate machine type - must be exactly C64SC (x64sc emulator)
@@ -158,13 +156,11 @@ impl ParseVSF {
         // Skip VICE version info header (21 bytes total)
         // We don't validate VICE version - only snapshot format matters
         // Format: "VICE Version" (12), separator (1), version string (4), SVN revision (4)
-        let _skip1 = read_fixed(&mut cur, 12)?;  // Skip "VICE Version" marker
-        let _skip2 = read_u8(&mut cur)?;          // Skip separator
-        let _skip3 = read_fixed(&mut cur, 4)?;    // Skip version string
-        let _skip4 = read_u32(&mut cur)?;         // Skip SVN revision
+        let _skip1 = read_fixed(&mut cur, 12)?;  // "VICE Version" marker
+        let _skip2 = read_u8(&mut cur)?;          // separator
+        let _skip3 = read_fixed(&mut cur, 4)?;    // version string
+        let _skip4 = read_u32(&mut cur)?;         // SVN revision
 
-        // Initialize optional hardware module storage
-        // VSF files contain multiple named modules, each with their own version and size
         let mut cpu: Option<Cpu6510> = None;
         let mut mem: Option<C64Mem> = None;
         let mut vic: Option<VicII> = None;
@@ -172,19 +168,17 @@ impl ParseVSF {
         let mut cia2: Option<Cia6526> = None;
         let mut sid: Option<Sid6581> = None;
 
-        // Parse all modules until end of file
-        // Each module has: name(16), major(1), minor(1), size(4), payload(size-22)
+        // Parse all modules (each has: name(16), major(1), minor(1), size(4), payload(size-22))
         while (cur.position() as usize) < self.raw.len() {
-            // Try to read module name (16 bytes, null-terminated)
             let name_raw = match read_fixed_opt(&mut cur, 16) {
                 Some(n) => n,
-                None => break,  // End of file reached
+                None => break,
             };
 
             let name = trim_nul(&name_raw).to_string();
-            let _mmaj = read_u8(&mut cur)?;     // Module major version
-            let _mmin = read_u8(&mut cur)?;     // Module minor version
-            let size = read_u32(&mut cur)? as usize;  // Total module size including header
+            let _mmaj = read_u8(&mut cur)?;
+            let _mmin = read_u8(&mut cur)?;
+            let size = read_u32(&mut cur)? as usize;
 
             // Calculate payload size (total size minus 22-byte module header)
             let payload_len = size.checked_sub(22)
@@ -192,16 +186,13 @@ impl ParseVSF {
             let start = cur.position() as usize;
             let end = start + payload_len;
 
-            // Validate payload doesn't exceed file bounds
             if end > self.raw.len() {
                 return Err(format!("Module '{}' beyond EOF", name));
             }
 
-            // Extract module payload data
             let payload = &self.raw[start..end];
             cur.set_position(end as u64);
 
-            // Parse module based on name
             match name.as_str() {
                 "MAINCPU" => cpu = Some(parse_cpu(payload)?),
                 "C64MEM" => mem = Some(parse_memory(payload)?),
@@ -209,11 +200,10 @@ impl ParseVSF {
                 "CIA1" => cia1 = Some(parse_cia(payload)?),
                 "CIA2" => cia2 = Some(parse_cia(payload)?),
                 "SID" => sid = Some(parse_sid(payload, cfg)?),
-                _ => {}  // Ignore unknown modules (e.g., DRIVE, PRINTER, etc.)
+                _ => {}  // Ignore unknown modules (e.g. DRIVE, PRINTER)
             }
         }
 
-        // Validate that all required modules were found
         let cpu = cpu.ok_or_else(|| "MAINCPU missing".to_string())?;
         validate_cpu(&cpu)?;
 
@@ -240,7 +230,6 @@ impl ParseVSF {
             );
         }
 
-        // Return complete snapshot with all hardware state
         Ok(C64Snapshot {
             cpu,
             mem,
@@ -268,27 +257,21 @@ impl ParseVSF {
         let cia1_path = format!("{}/{}-cia1", work, base_name);
         let cia2_path = format!("{}/{}-cia2", work, base_name);
 
-        // Extract RAM $0200-$FFEF
         let mut ram_file = fs::File::create(&ram_hi_path)?;
         ram_file.write_all(&snap.mem.ram[0x0200..=0xFFEF])?;
 
-        // Extract color RAM (1024 bytes)
         let mut color_file = fs::File::create(&color_path)?;
         color_file.write_all(&snap.vic.color_ram[..])?;
 
-        // Extract zero page $02-$F7 (246 bytes)
         let mut zp_file = fs::File::create(&zp_path)?;
         zp_file.write_all(&snap.mem.ram[0x02..=0xF7])?;
 
-        // Extract VIC-II registers (47 bytes)
         let mut vic_file = fs::File::create(&vic_path)?;
         vic_file.write_all(&snap.vic.registers)?;
 
-        // Extract SID registers (25 bytes)
         let mut sid_file = fs::File::create(&sid_path)?;
         sid_file.write_all(&snap.sid.regs_25)?;
 
-        // Extract CIA1 (20 bytes: registers + counters)
         let mut cia1_file = fs::File::create(&cia1_path)?;
         cia1_file.write_all(&[
             snap.cia1.ora,
@@ -313,7 +296,6 @@ impl ParseVSF {
             (snap.cia1.tbc >> 8) as u8,
         ])?;
 
-        // Extract CIA2 (20 bytes)
         let mut cia2_file = fs::File::create(&cia2_path)?;
         cia2_file.write_all(&[
             snap.cia2.ora,
@@ -342,22 +324,19 @@ impl ParseVSF {
     }
 
     pub fn compress_lzsa(&self, in_path: &str, out_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        // Read input file
         let input_data = fs::read(in_path)?;
 
         // Configure LZSA1 with raw mode (no frame header)
         let options = Options {
             version: Version::V1,
-            mode: Mode::RawForward,  // Raw block, no frame header
+            mode: Mode::RawForward,
             quality: Quality::Ratio,
             min_match_size: 3,
         };
 
-        // Compress using lzsa-sys
         let compressed = compress_with_options(&input_data, &options)
             .map_err(|e| format!("LZSA compression failed: {}", e))?;
 
-        // Write compressed data to output file
         fs::write(out_path, &compressed)?;
 
         Ok(())
@@ -370,7 +349,7 @@ fn parse_cpu(payload: &[u8]) -> Result<Cpu6510, String> {
     let mut c = Cursor::new(payload);
 
     let _clk = read_u32(&mut c)?;
-    let _padding = read_fixed(&mut c, 4)?;  // 4-byte padding
+    let _padding = read_fixed(&mut c, 4)?;
 
     let a = read_u8(&mut c)?;
     let x = read_u8(&mut c)?;

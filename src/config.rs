@@ -8,7 +8,6 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Application version
 pub const VERSION: &str = "0.9.1-beta";
 
 #[derive(Clone)]
@@ -27,9 +26,7 @@ impl Config {
         self.work_path.to_str().expect("Invalid work path")
     }
 
-    /// Create a Config with automatically determined paths
-    ///
-    /// - work_path: Creates a unique temp directory in the system temp folder
+    /// Create a Config with a unique temporary work directory
     pub fn auto() -> Result<Self, Box<dyn std::error::Error>> {
         let work_path = Self::create_temp_work_dir()?;
         Ok(Self::new(work_path))

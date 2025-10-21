@@ -1,7 +1,6 @@
 //! Snapshot converter main API
 //!
 //! Converts Vice VSF snapshots to self-restoring PRG files with LZSA compression.
-//! This is the main API for the conversion process.
 //!
 //! This program is unlicensed and dedicated to the public domain.
 //! Developed by Tommy Olsen.
@@ -32,12 +31,10 @@ impl ConvertSnapshot {
     /// * `Ok(())` on success
     /// * `Err(String)` with user-friendly error message on failure
     pub fn convert(&self, input_path: &str, output_path: &str) -> Result<(), String> {
-        // Check if output file already exists
         if std::path::Path::new(output_path).exists() {
             return Err(format!("Output file already exists:\n{}\n\nPlease choose a different filename or delete the existing file first.", output_path));
         }
 
-        // Parse VSF snapshot
         let parser = ParseVSF::import(input_path, &self.config)
             .map_err(|e| format!("Failed to read VSF file: {}", e))?;
 
@@ -48,15 +45,12 @@ impl ConvertSnapshot {
         let mut f8_ff_data = [0u8; 8];
         f8_ff_data.copy_from_slice(&snap.mem.ram[0xF8..=0xFF]);
 
-        // Find free RAM blocks for patch code
         let mut ram_finder = FindRam::new(&snap.mem.ram);
 
-        // Patch memory with restoration code
         let mut ram = snap.mem.ram.clone();
         let patch_mem = PatchMem::new(&snap, &mut *ram, &mut ram_finder)
             .map_err(|e| format!("Memory patching failed: {}", e))?;
 
-        // Create patched snapshot with modified RAM
         let patched_snap = C64Snapshot {
             cpu: snap.cpu.clone(),
             mem: crate::parse_vsf::C64Mem {
@@ -70,12 +64,11 @@ impl ConvertSnapshot {
             sid: snap.sid.clone(),
         };
 
-        // Extract components to temporary files
         let (ram_path, color_path, zp_path, vic_path, sid_path, cia1_path, cia2_path) =
             parser.extract_ram(&patched_snap)
                 .map_err(|e| format!("Failed to extract components: {}", e))?;
 
-        // Compress data files (CIA files are not compressed - only 20 bytes each)
+        // CIA files are not compressed (only 20 bytes each)
         parser.compress_lzsa(&ram_path, &format!("{}.lzsa", ram_path))
             .map_err(|e| format!("Failed to compress RAM: {}", e))?;
         parser.compress_lzsa(&color_path, &format!("{}.lzsa", color_path))
@@ -87,7 +80,6 @@ impl ConvertSnapshot {
         parser.compress_lzsa(&sid_path, &format!("{}.lzsa", sid_path))
             .map_err(|e| format!("Failed to compress SID: {}", e))?;
 
-        // Generate final PRG file
         let prg_maker = MakePRGAsm::new(
             &format!("{}.lzsa", color_path),
             &format!("{}.lzsa", vic_path),

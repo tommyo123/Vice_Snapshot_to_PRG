@@ -32,7 +32,6 @@ const BROWSE_BTN_WIDTH: i32 = 60;
 fn main() {
     let app = app::App::default().with_scheme(app::Scheme::Gtk);
 
-    // Custom C64 chip icon
     let icon_svg = r##"<svg width="256" height="256" viewBox="0 0 24 24" fill="none"
      stroke="#000000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
      xmlns="http://www.w3.org/2000/svg">
@@ -55,20 +54,17 @@ fn main() {
   <polygon points="16.2,9.2 20.2,11.5 16.2,13.8" fill="#27C93F" stroke="none"/>
 </svg>"##;
 
-    // Create main window with version number
     let mut window = Window::default()
         .with_size(WINDOW_WIDTH, WINDOW_HEIGHT)
         .with_label(&format!("VICE 3.6-3.9 x64sc Snapshot to PRG Converter v{}", VERSION));
     window.make_resizable(false);
 
-    // Set custom icon
     if let Ok(icon) = SvgImage::from_data(icon_svg) {
         window.set_icon(Some(icon));
     }
 
     let mut y_pos = MARGIN;
 
-    // Input file section
     let mut input_label = Frame::default()
         .with_pos(MARGIN, y_pos)
         .with_size(WINDOW_WIDTH - 2 * MARGIN, 25)
@@ -89,7 +85,6 @@ fn main() {
 
     y_pos += FIELD_HEIGHT + 20;
 
-    // Output file section
     let mut output_label = Frame::default()
         .with_pos(MARGIN, y_pos)
         .with_size(WINDOW_WIDTH - 2 * MARGIN, 25)
@@ -110,7 +105,6 @@ fn main() {
 
     y_pos += FIELD_HEIGHT + 20;
 
-    // Status section
     let mut status_label = Frame::default()
         .with_pos(MARGIN, y_pos)
         .with_size(WINDOW_WIDTH - 2 * MARGIN, 25)
@@ -130,7 +124,6 @@ fn main() {
     status_display.wrap_mode(text::WrapMode::AtBounds, 0);
     status_display.set_frame(FrameType::DownBox);
 
-    // Action buttons - three buttons symmetrically placed
     let button_y = WINDOW_HEIGHT - BUTTON_HEIGHT - 20;
     let button_spacing = 10;
     let total_button_width = 3 * BUTTON_WIDTH + 2 * button_spacing;
@@ -160,13 +153,11 @@ fn main() {
     window.end();
     window.show();
 
-    // Create shared state for callbacks
     let input_field_rc = Rc::new(RefCell::new(input_field.clone()));
     let output_field_rc = Rc::new(RefCell::new(output_field.clone()));
     let status_buffer_rc = Rc::new(RefCell::new(status_buffer));
     let convert_btn_rc = Rc::new(RefCell::new(convert_btn.clone()));
 
-    // Input file browse button callback
     {
         let input_field = input_field_rc.clone();
         let output_field = output_field_rc.clone();
@@ -176,7 +167,6 @@ fn main() {
             chooser.set_title("Select VICE Snapshot Image");
             chooser.set_filter("VSF Files\t*.vsf\nAll Files\t*");
 
-            // Set initial directory if current value exists
             let current = input_field.borrow().value();
             if !current.is_empty() {
                 if let Some(parent) = Path::new(&current).parent() {
@@ -192,7 +182,7 @@ fn main() {
                 let path_str = filename.to_string_lossy().to_string();
                 input_field.borrow_mut().set_value(&path_str);
 
-                // Auto-suggest output filename in same directory if output is empty or default
+                // Auto-suggest output.prg in same directory
                 let output_val = output_field.borrow().value();
                 if output_val.is_empty() || output_val == "output.prg" {
                     if let Some(parent) = filename.parent() {
@@ -204,7 +194,6 @@ fn main() {
         });
     }
 
-    // Output file browse button callback
     {
         let input_field = input_field_rc.clone();
         let output_field = output_field_rc.clone();
@@ -215,7 +204,6 @@ fn main() {
             chooser.set_filter("PRG Files\t*.prg\nAll Files\t*");
             chooser.set_option(dialog::FileDialogOptions::SaveAsConfirm);
 
-            // Set directory based on input file if available
             let input_path = input_field.borrow().value();
             if !input_path.is_empty() {
                 if let Some(parent) = Path::new(&input_path).parent() {
@@ -234,12 +222,10 @@ fn main() {
         });
     }
 
-    // Help button callback
     help_btn.set_callback(|_| {
         show_help_window();
     });
 
-    // Convert button callback
     {
         let input_field = input_field_rc.clone();
         let output_field = output_field_rc.clone();
@@ -250,10 +236,8 @@ fn main() {
             let input_path = input_field.borrow().value();
             let output_path = output_field.borrow().value();
 
-            // Clear status
             status_buffer.borrow_mut().set_text("");
 
-            // Validate inputs
             if input_path.is_empty() {
                 status_buffer.borrow_mut().set_text("✗ Error: Please select an input VSF file");
                 return;
@@ -264,14 +248,12 @@ fn main() {
                 return;
             }
 
-            // Check if input file exists
             if !Path::new(&input_path).exists() {
                 let msg = format!("✗ Error: Input file not found:\n{}", input_path);
                 status_buffer.borrow_mut().set_text(&msg);
                 return;
             }
 
-            // Check if output file exists and ask for confirmation
             if Path::new(&output_path).exists() {
                 let choice = dialog::choice2_default(
                     &format!("The output file already exists:\n\n{}\n\nDo you want to overwrite it?", output_path),
@@ -285,7 +267,6 @@ fn main() {
                     return;
                 }
 
-                // Try to delete the existing file
                 if let Err(e) = std::fs::remove_file(&output_path) {
                     let msg = format!("✗ Error: Failed to delete existing file:\n{}", e);
                     status_buffer.borrow_mut().set_text(&msg);
@@ -293,43 +274,35 @@ fn main() {
                 }
             }
 
-            // Disable convert button during processing
             btn.deactivate();
             status_buffer.borrow_mut().set_text("Converting snapshot image...\n");
             app::awake();
 
-            // Create config with automatic paths
             let config_result = Config::auto();
 
             let result = match config_result {
                 Ok(config) => {
                     let work_path = config.work_path.clone();
 
-                    // Perform conversion
                     let converter = ConvertSnapshot::new(config);
                     let conversion_result = converter.convert(&input_path, &output_path);
 
-                    // Clean up work directory regardless of success or failure
                     let cleanup_result = cleanup_work_dir(&work_path);
 
-                    // Return conversion result, but add cleanup warning if needed
                     match (conversion_result, cleanup_result) {
                         (Ok(()), Ok(())) => Ok(()),
                         (Ok(()), Err(cleanup_err)) => {
-                            // Conversion succeeded but cleanup failed
                             Err(format!("Conversion succeeded, but failed to clean up temporary directory:\n{}", cleanup_err))
                         },
                         (Err(conv_err), Ok(())) => Err(conv_err),
-                        (Err(conv_err), Err(_)) => Err(conv_err), // Prioritize conversion error
+                        (Err(conv_err), Err(_)) => Err(conv_err),
                     }
                 },
                 Err(e) => Err(format!("Failed to initialize configuration: {}", e)),
             };
 
-            // Re-enable convert button
             btn.activate();
 
-            // Display result
             match result {
                 Ok(()) => {
                     let success_msg = format!(
@@ -346,12 +319,10 @@ fn main() {
         });
     }
 
-    // Quit button callback
     quit_btn.set_callback(|_| {
         app::quit();
     });
 
-    // Handle window close
     window.set_callback(|_| {
         if app::event() == enums::Event::Close {
             app::quit();

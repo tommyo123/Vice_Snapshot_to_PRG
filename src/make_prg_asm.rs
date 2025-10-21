@@ -62,7 +62,6 @@ impl MakePRGAsm {
     }
 
     pub fn generate_prg(&self, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        // Assemble relocated decompressor
         let relocated_binary = self.assemble_relocated_code()?;
 
         if relocated_binary.len() > 256 {
@@ -75,11 +74,9 @@ impl MakePRGAsm {
         // Write temporary data files for .incbin
         self.write_data_files(&relocated_binary)?;
 
-        // Assemble main code
         let main_asm = self.generate_main_code_asm6502();
         let prg_binary = self.assemble_with_asm6502(&main_asm)?;
 
-        // Write final PRG
         fs::write(output_path, &prg_binary)?;
 
         Ok(())
@@ -158,13 +155,11 @@ start:
     LDA #$FF
     STA $D019
 
-    ; Initialize memory map and stack
     LDA #$35
     STA $01
     LDX #$FF
     TXS
 
-    ; Decompress Color RAM
     LDA #<color_data
     STA LZSA_SRC_LO
     LDA #>color_data
@@ -175,7 +170,6 @@ start:
     STA LZSA_DST_HI
     JSR decompress_lzsa1
 
-    ; Decompress VIC registers
     LDA #<vic_data
     STA LZSA_SRC_LO
     LDA #>vic_data
@@ -193,15 +187,12 @@ start:
     LDA $D012
     STA $D012
 
-    ; Disable VIC IRQs (extra safety)
     LDA #$00
     STA $D01A
 
-    ; Clear VIC IRQ flags
     LDA #$FF
     STA $D019
 
-    ; Decompress SID registers
     LDA #<sid_data
     STA LZSA_SRC_LO
     LDA #>sid_data
@@ -215,14 +206,12 @@ start:
 ; =============================================================================
 ; CIA1 Complete Setup (100% safe - no timers started yet)
 ; =============================================================================
-    ; Disable all interrupts and stop timers
     LDA #$7F
     STA $DC0D
     LDA #$00
     STA $DC0E
     STA $DC0F
 
-    ; Restore port registers
     LDA cia1_data+2
     STA $DC02
     LDA cia1_data+3
@@ -359,19 +348,16 @@ start:
     LDA #$34
     STA $01
 
-    ; Calculate RAM data block size
     LDA #<RAM_DATA_SIZE
     STA $F8
     LDA #>RAM_DATA_SIZE
     STA $F9
 
-    ; Set source to end of RAM data
     LDA #<(RAM_DATA_END-1)
     STA $FE
     LDA #>(RAM_DATA_END-1)
     STA $FF
 
-    ; Set destination to top of memory
     LDA #$FF
     STA $FC
     STA $FD
@@ -413,19 +399,17 @@ CPLP:
     CPY #<RELOCATED_SIZE
     BNE CPLP
 
-    ; Setup source pointer for final RAM decompression
     LDA #<($10000 - RAM_DATA_SIZE + RELOCATED_SIZE)
     STA LZSA_SRC_LO
     LDA #>($10000 - RAM_DATA_SIZE + RELOCATED_SIZE)
     STA LZSA_SRC_HI
 
-    ; Setup destination pointer (start at $0200 - skip $0100-$01FF!)
+    ; Start at $0200 - skip $0100-$01FF!
     LDA #$00
     STA LZSA_DST_LO
     LDA #$02
     STA LZSA_DST_HI
 
-    ; Jump to relocated decompressor
     JMP $0100
 
 ; =============================================================================

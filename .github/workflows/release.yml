@@ -133,7 +133,7 @@ jobs:
           - Not write anything to registry or Program Files
           
           REQUIREMENTS:
-          - Windows 7 or later (64-bit)
+          - Windows 8 or later (64-bit)
           - Visual C++ Redistributable 2015-2022
             (included as vcruntime140.dll if not already installed)
           
