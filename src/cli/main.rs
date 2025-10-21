@@ -128,7 +128,7 @@ fn print_usage(program_name: &str) {
     println!("  {} ./saves/game.vsf ./prg/game.prg", name);
     println!();
     println!("IMPORTANT:");
-    println!("  - Only works with VICE 3.9 x64sc snapshots");
+    println!("  - Only works with VICE 3.6-3.9 x64sc snapshots");
     println!("  - Memory MUST be initialized before snapshot (f 0000 ffff 00)");
     println!("  - Do NOT use \"Smart attach...\" feature in VICE");
     println!();
