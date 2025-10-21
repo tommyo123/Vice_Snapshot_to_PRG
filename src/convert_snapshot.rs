@@ -2,8 +2,8 @@
 //!
 //! Converts Vice VSF snapshots to self-restoring PRG files with LZSA compression.
 //!
-//! This program is unlicensed and dedicated to the public domain.
-//! Developed by Tommy Olsen.
+// Copyright (c) 2025 Tommy Olsen
+// Licensed under the MIT License.
 
 use crate::config::Config;
 use crate::parse_vsf::{ParseVSF, C64Snapshot};

@@ -339,6 +339,13 @@ sudo apt-get install libx11-6 libxext6 libxft2 libxinerama1 libcairo2 libpango-1
 - Action Replay cartridge series by Datel Electronics
 - The VICE development team for the excellent C64 emulator
 
-## License
+## License (MIT License)
 
-This software is released under the CC0 1.0 Universal Public Domain Dedication. You are free to use, copy, modify, and distribute it for any purpose without restrictions or attribution. See https://creativecommons.org/publicdomain/zero/1.0/ for details.
+This software is licensed under the MIT License.
+
+The MIT License is a permissive free software license, meaning you are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the software.
+
+The only condition is that the copyright notice and this permission notice must be included in all copies or substantial portions of the Software.
+
+Short License Notice:
+Copyright (c) 2025 Tommy Olsen

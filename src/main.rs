@@ -1,7 +1,7 @@
 //! Converts VICE 3.6-3.9 x64sc snapshot images (VSF) to C64 PRG files.
 //!
-//! This program is unlicensed and dedicated to the public domain.
-//! Developed by Tommy Olsen.
+// Copyright (c) 2025 Tommy Olsen
+// Licensed under the MIT License.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -349,8 +349,8 @@ fn show_help_window() {
     let help_text = format!(
         r#"VICE 3.6-3.9 x64sc Snapshot to PRG Converter v{}
 
-This program is unlicensed and dedicated to the public domain.
-Developed by Tommy Olsen.
+Copyright (c) 2025 Tommy Olsen
+Licensed under the MIT License.
 
 ═══════════════════════════════════════════════════════════
 

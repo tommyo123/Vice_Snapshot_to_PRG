@@ -2,8 +2,8 @@
 //!
 //! Wraps the asm6502 library from GitHub for inline assembly.
 //!
-//! This program is unlicensed and dedicated to the public domain.
-//! Developed by Tommy Olsen.
+// Copyright (c) 2025 Tommy Olsen
+// Licensed under the MIT License.
 
 #![allow(dead_code)]
 

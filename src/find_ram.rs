@@ -6,8 +6,8 @@
 //! Only tracks sequences of 32 or more consecutive identical bytes in the
 //! $0200-$FFEF range (avoiding zero page, stack, and system vectors).
 //!
-//! This program is unlicensed and dedicated to the public domain.
-//! Developed by Tommy Olsen.
+// Copyright (c) 2025 Tommy Olsen
+// Licensed under the MIT License.
 
 #![allow(dead_code)]
 

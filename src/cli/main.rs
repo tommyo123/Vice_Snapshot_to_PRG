@@ -2,8 +2,8 @@
 //!
 //! Usage: vice-snapshot-to-prg-converter-cli <input.vsf> <output.prg>
 //!
-//! This program is unlicensed and dedicated to the public domain.
-//! Developed by Tommy Olsen.
+// Copyright (c) 2025 Tommy Olsen
+// Licensed under the MIT License.
 
 use std::env;
 use std::path::Path;

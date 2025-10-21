@@ -2,8 +2,8 @@
 //!
 //! Parses VICE snapshot files and extracts CPU, memory, VIC, CIA, and SID state.
 //!
-//! This program is unlicensed and dedicated to the public domain.
-//! Developed by Tommy Olsen.
+// Copyright (c) 2025 Tommy Olsen
+// Licensed under the MIT License.
 
 #![allow(dead_code)]
 

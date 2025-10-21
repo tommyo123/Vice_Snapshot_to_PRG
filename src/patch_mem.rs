@@ -5,8 +5,8 @@
 //! - Block 10: Restore SP + wipe block 9 + restore $00 + build RTI frame + preload A/X/Y + jump to $01xx
 //! - $01xx: Wipe block 10 + minimal restore + RTI
 //!
-//! This program is unlicensed and dedicated to the public domain.
-//! Developed by Tommy Olsen.
+// Copyright (c) 2025 Tommy Olsen
+// Licensed under the MIT License.
 
 #![allow(dead_code)]
 

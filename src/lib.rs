@@ -3,8 +3,8 @@
 //! This library provides the core functionality for converting VICE 3.6-3.9 x64sc
 //! snapshot files to self-restoring C64 PRG files.
 //!
-//! This program is unlicensed and dedicated to the public domain.
-//! Developed by Tommy Olsen.
+// Copyright (c) 2025 Tommy Olsen
+// Licensed under the MIT License.
 
 pub mod asm_wrapper;
 pub mod config;
