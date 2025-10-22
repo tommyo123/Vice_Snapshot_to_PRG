@@ -46,7 +46,8 @@ Alternatively, build from source to verify the code yourself.
 ### Windows
 - **Tested:** Windows 11 (64-bit)
 - **Expected to work:** Windows 8, 10 (64-bit)
-- **Not supported:** 32-bit Windows, Windows XP/Vista/7
+- **Extended/Unofficial Support:** Windows 7 (Requires VxKex for API compatibility, https://github.com/i486/VxKex)
+- **Not supported:** 32-bit Windows, Windows XP/Vista
 
 Requires Visual C++ Redistributable 2015-2022 or bundled runtime.
 
