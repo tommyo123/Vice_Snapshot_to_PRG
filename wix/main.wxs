@@ -27,7 +27,7 @@
 
         <Package Id="*"
             Keywords="Installer"
-            Description="Converts VICE 3.9 x64sc snapshots to self-restoring C64 PRG files"
+            Description="Converts VICE 3.6-3.9 x64sc snapshots to self-restoring C64 PRG files"
             Manufacturer="Tommy Olsen"
             InstallerVersion="450"
             Languages="1033"
