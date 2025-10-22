@@ -12,7 +12,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 ### Removed
 
-## [0.9.1] - 2025-10-19
+## [1.0.0] - 2025-10-22
+
+### Added
+- **Block 10 restoration stage** - New intermediate restoration block for improved memory allocation
+    - Splits restoration into three stages: Block 9 → Block 10 → Final restore code
+    - Significantly improves success rate by reducing Block 9 size requirements
+    - Makes it easier to allocate restoration code in fragmented memory
+- **Verified VICE version support** - Tested and confirmed working with VICE 3.6, 3.7, 3.8, and 3.9
+    - Most extensive testing performed with VICE 3.9
+    - Older versions (3.6-3.8) confirmed functional but less tested
+
+### Changed
+- **Optimized final restore code** - Reduced memory footprint of restoration code in `$01xx`
+    - More efficient register handling
+    - Streamlined interrupt configuration
+    - Smaller code size allows for better stack pointer placement
+- **Improved memory allocation strategy** - Two-block architecture (Block 9 + Block 10) instead of single large block
+    - Block 9: Core restore + wipe blocks 1-8 + jump to Block 10
+    - Block 10: Wipe Block 9 + restore `$F8-$FF` + setup registers + jump to `$01xx`
+    - Reduces maximum contiguous memory requirement
+- **Enhanced CIA timer restoration** - More robust timer initialization sequence
+    - Timers configured but not started until final stage
+    - Prevents premature interrupt generation during restoration
+- **License change** - Changed from CC0 (public domain) to MIT License
+    - Provides better legal clarity
+    - Maintains open source spirit with minimal restrictions
+
+### Fixed
+- Allocation failures in snapshots with fragmented memory
+- Edge cases where large restoration blocks couldn't be allocated
+- Improved reliability across different VICE versions
+
+### Technical Improvements
+- Three-stage restoration architecture improves modularity
+- Better separation of concerns in restoration process
+- Reduced code complexity in individual restoration stages
+- More predictable memory requirements
+
+### Known Limitations
+- Only supports VICE 3.6-3.9 x64sc snapshots (snapshot format changes between VICE versions)
+- Requires memory initialization (`f 0000 ffff 00` + `reset`) before snapshot
+- Stack pointer placement may be risky in edge cases with unusual stack configurations
+- "Smart attach..." should be avoided unless VICE is configured to initialize memory to zeros on reset
+- macOS version is untested (no access to macOS hardware for verification)
+- Linux binaries require Ubuntu 24.04+, Debian 12+, or compatible distributions
+- Windows 7 is not supported (requires Windows 8 or later)
+
+## [0.9.1] - 2024-10-19
 
 ### Added
 - **CLI version** (`vice-snapshot-to-prg-converter-cli`) for command-line automation and scripting
@@ -61,14 +108,6 @@ All packages now include both GUI and CLI versions:
 - **Linux tar.gz**: Self-contained binaries with all dependencies
 - **macOS tar.gz**: Self-contained binaries (untested on actual hardware)
 
-### Known Limitations
-- Only supports VICE 3.6-3.9 x64sc snapshots
-- Requires memory initialization (`f 0000 ffff 00` + `reset`) before snapshot
-- Stack pointer placement may be risky in edge cases
-- "Smart attach..." should be avoided unless VICE is configured to initialize memory to zeros on reset
-- macOS version is untested (no access to macOS hardware for verification)
-- Linux binaries require Ubuntu 24.04+, Debian 12+, or compatible distributions
-
 ## [0.9.0] - 2024-10-14
 
 ### Added
@@ -87,6 +126,7 @@ All packages now include both GUI and CLI versions:
 - Stack pointer placement may be risky in edge cases
 - "Smart attach..." feature in VICE should be avoided
 
-[Unreleased]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v0.9.1...v1.0.0
 [0.9.1]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/tag/v0.9.0
