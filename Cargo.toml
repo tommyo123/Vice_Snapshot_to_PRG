@@ -1,6 +1,6 @@
 [package]
 name = "vice-snapshot-to-prg-converter"
-version = "1.99.0"
+version = "1.9.0"
 edition = "2024"
 authors = ["Tommy Olsen"]
 
@@ -20,7 +20,7 @@ name = "vice-snapshot-to-prg-converter-cli"
 path = "src/cli/main.rs"
 
 [dependencies]
-fltk = { version = "1.5.20", features = ["fltk-bundled"] }
+fltk = { version = "1.5.22", features = ["fltk-bundled"] }
 asm6502 = { git = "https://github.com/tommyo123/asm6502" }
 lzsa-sys = { git = "https://github.com/tommyo123/lzsa-sys" }
 

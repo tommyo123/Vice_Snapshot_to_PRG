@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const VERSION: &str = "1.90-Beta";
+pub const VERSION: &str = "1.9-Beta";
 
 #[derive(Clone)]
 pub struct Config {

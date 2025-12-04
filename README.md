@@ -6,7 +6,7 @@ The converter reconstructs the full machine state: CPU registers, RAM, Color RAM
 
 ## Status & License
 
-- **Version:** 1.90-Beta
+- **Version:** 1.9.0-Beta
 - **License:** MIT
 
 ## What it does
@@ -102,12 +102,16 @@ vice-snapshot-to-prg-converter-cli input.vsf output.crt
 
 # CRT with custom name and embedded PRGs
 vice-snapshot-to-prg-converter-cli --crt --name "My Game" --include-dir ./prg input.vsf output.crt
+
+# CRT with custom hook address
+vice-snapshot-to-prg-converter-cli --crt --include-dir ./prg --hook-addr $0334 input.vsf output.crt
 ```
 
 **Options:**
 - `--prg` / `--crt` – Force format (optional, auto-detected from extension)
 - `--name <name>` – Cartridge name (max 32 chars, CRT only)
 - `--include-dir <dir>` – Embed PRG files from directory (CRT only)
+- `--hook-addr <hex>` – Override LOAD/SAVE hook address (CRT only, requires `--include-dir`)
 
 Output files are overwritten without prompting.
 
