@@ -258,7 +258,7 @@ impl ConvertSnapshotCRT {
             .config
             .cartridge_name
             .as_deref()
-            .unwrap_or("VICE Snapshot");
+            .unwrap_or("VICE SNAPSHOT");
         let mut crt = CRTBuilder::new(CartridgeType::EasyFlash, total_banks, cartridge_name)?;
 
         // Fill bank 0 with restore code
