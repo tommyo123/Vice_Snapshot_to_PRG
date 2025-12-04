@@ -25,6 +25,7 @@ struct CliArgs {
     format: OutputFormat,
     cartridge_name: Option<String>,
     include_dir: Option<String>,
+    hook_addr: Option<u16>,
 }
 
 fn main() {
@@ -71,9 +72,21 @@ fn main() {
         _ => {}
     }
 
-    // Warn if include-dir used with PRG
-    if cli_args.format == OutputFormat::Prg && cli_args.include_dir.is_some() {
-        eprintln!("Warning: --include-dir is only used with CRT format, ignoring");
+    // Warn if CRT-only options used with PRG
+    if cli_args.format == OutputFormat::Prg {
+        if cli_args.include_dir.is_some() {
+            eprintln!("Warning: --include-dir is only used with CRT format, ignoring");
+            eprintln!();
+        }
+        if cli_args.hook_addr.is_some() {
+            eprintln!("Warning: --hook-addr is only used with CRT format, ignoring");
+            eprintln!();
+        }
+    }
+
+    // Warn if hook-addr used without include-dir
+    if cli_args.hook_addr.is_some() && cli_args.include_dir.is_none() {
+        eprintln!("Warning: --hook-addr requires --include-dir, ignoring");
         eprintln!();
     }
 
@@ -114,6 +127,9 @@ fn main() {
     if let Some(ref dir) = cli_args.include_dir {
         println!("Include: {}", dir);
     }
+    if let Some(addr) = cli_args.hook_addr {
+        println!("Hook:    ${:04X}", addr);
+    }
     println!();
     println!("Converting...");
 
@@ -144,6 +160,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut format: Option<OutputFormat> = None;
     let mut cartridge_name: Option<String> = None;
     let mut include_dir: Option<String> = None;
+    let mut hook_addr: Option<u16> = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -181,6 +198,16 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 }
                 include_dir = Some(args[i].clone());
             }
+            "--hook-addr" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--hook-addr requires a hex address".to_string());
+                }
+                let addr_str = args[i].trim_start_matches('$').trim_start_matches("0x");
+                let addr = u16::from_str_radix(addr_str, 16)
+                    .map_err(|_| format!("Invalid hex address: {}", args[i]))?;
+                hook_addr = Some(addr);
+            }
             _ if arg.starts_with('-') => {
                 return Err(format!("Unknown option: {}", arg));
             }
@@ -213,6 +240,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         format,
         cartridge_name,
         include_dir,
+        hook_addr,
     })
 }
 
@@ -238,6 +266,10 @@ fn convert_crt(cli_args: &CliArgs) -> Result<(), String> {
 
     if let Some(ref dir) = cli_args.include_dir {
         config = config.with_include_dir(dir);
+    }
+
+    if let Some(addr) = cli_args.hook_addr {
+        config = config.with_trampoline_address(addr);
     }
 
     let work_path = config.base_config.work_path.clone();
@@ -280,17 +312,19 @@ fn print_usage(program_name: &str) {
     println!("  <output>      Path to output file (.prg or .crt)");
     println!();
     println!("OPTIONS:");
-    println!("  --prg              Force PRG format output");
-    println!("  --crt              Force EasyFlash CRT format output");
-    println!("  --name <name>      Cartridge name (CRT only, max 32 chars)");
+    println!("  --prg                Force PRG format output");
+    println!("  --crt                Force EasyFlash CRT format output");
+    println!("  --name <name>        Cartridge name (CRT only, max 32 chars)");
     println!("  --include-dir <dir>  Include PRG files from directory (CRT only)");
-    println!("  -h, --help         Show this help message");
+    println!("  --hook-addr <hex>    LOAD/SAVE hook address (CRT only, overrides auto)");
+    println!("  -h, --help           Show this help message");
     println!();
     println!("EXAMPLES:");
     println!("  {} snapshot.vsf output.prg", name);
     println!("  {} snapshot.vsf output.crt", name);
     println!("  {} --crt --name \"My Game\" snapshot.vsf game.crt", name);
     println!("  {} --crt --include-dir ./files snapshot.vsf game.crt", name);
+    println!("  {} --crt --include-dir ./files --hook-addr $0334 snapshot.vsf game.crt", name);
     println!();
     println!("IMPORTANT:");
     println!("  - Only works with VICE 3.6-3.9 x64sc snapshots");
