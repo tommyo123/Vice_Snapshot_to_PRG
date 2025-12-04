@@ -157,3 +157,9 @@ impl Default for Assembler6502Wrapper {
         Self::new()
     }
 }
+
+/// Convenience function to assemble source code to bytes
+pub fn assemble_to_bytes(src: &str) -> Result<Vec<u8>, String> {
+    let mut assembler = Assembler6502Wrapper::new();
+    assembler.assemble_bytes(src).map_err(|e| format!("{:?}", e))
+}

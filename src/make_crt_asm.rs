@@ -1,29 +1,34 @@
-//! PRG file generator using inline asm6502 assembler
+//! CRT ROM code generator
 //!
-//! Generates a self-restoring C64 PRG from compressed snapshot components.
+//! Generates restore code that starts at $0340 (called from ROMH @ $E000).
+//! RAM lzsa is already copied to end of memory by ROMH, so we don't include it here.
 //!
 // Copyright (c) 2025 Tommy Olsen
 // Licensed under the MIT License.
 
-#![allow(dead_code)]
-
-use crate::config::Config;
 use std::fs;
+use crate::asm_wrapper::assemble_to_bytes;
+use crate::config::Config;
 
-pub struct MakePRGAsm {
+/// CRT restore code generator
+pub struct MakeCRTAsm {
     color_lzsa: Vec<u8>,
     vic_lzsa: Vec<u8>,
     sid_lzsa: Vec<u8>,
     cia1_bin: Vec<u8>,
     cia2_bin: Vec<u8>,
     zp_lzsa: Vec<u8>,
-    ram_lzsa: Vec<u8>,
     block9_addr: u16,
     f8_ff_data: [u8; 8],
+    #[allow(dead_code)]
     config: Config,
+    relocated_size: usize,
+    ram_lzsa_size: usize,
+    restore_code_size: usize,
+    load_save_code_size: usize,
 }
 
-impl MakePRGAsm {
+impl MakeCRTAsm {
     pub fn new(
         color_lzsa_path: &str,
         vic_lzsa_path: &str,
@@ -31,107 +36,199 @@ impl MakePRGAsm {
         cia1_bin_path: &str,
         cia2_bin_path: &str,
         zp_lzsa_path: &str,
-        ram_lzsa_path: &str,
         block9_addr: u16,
         f8_ff_data: [u8; 8],
         config: &Config,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let cia1_bin = fs::read(cia1_bin_path)?;
-        let cia2_bin = fs::read(cia2_bin_path)?;
+        relocated_size: usize,
+        ram_lzsa_size: usize,
+        restore_code_size: usize,
+        load_save_code_size: usize,
+    ) -> Result<Self, String> {
+        let cia1_bin = fs::read(cia1_bin_path)
+            .map_err(|e| format!("Failed to read CIA1 file: {}", e))?;
+        let cia2_bin = fs::read(cia2_bin_path)
+            .map_err(|e| format!("Failed to read CIA2 file: {}", e))?;
 
-        // Validate CIA file size
         if cia1_bin.len() != 20 {
-            return Err(format!("CIA1 file must be 20 bytes, got {}", cia1_bin.len()).into());
+            return Err(format!("CIA1 file must be 20 bytes, got {}", cia1_bin.len()));
         }
         if cia2_bin.len() != 20 {
-            return Err(format!("CIA2 file must be 20 bytes, got {}", cia2_bin.len()).into());
+            return Err(format!("CIA2 file must be 20 bytes, got {}", cia2_bin.len()));
         }
 
         Ok(Self {
-            color_lzsa: fs::read(color_lzsa_path)?,
-            vic_lzsa: fs::read(vic_lzsa_path)?,
-            sid_lzsa: fs::read(sid_lzsa_path)?,
+            color_lzsa: fs::read(color_lzsa_path)
+                .map_err(|e| format!("Failed to read color LZSA: {}", e))?,
+            vic_lzsa: fs::read(vic_lzsa_path)
+                .map_err(|e| format!("Failed to read VIC LZSA: {}", e))?,
+            sid_lzsa: fs::read(sid_lzsa_path)
+                .map_err(|e| format!("Failed to read SID LZSA: {}", e))?,
             cia1_bin,
             cia2_bin,
-            zp_lzsa: fs::read(zp_lzsa_path)?,
-            ram_lzsa: fs::read(ram_lzsa_path)?,
+            zp_lzsa: fs::read(zp_lzsa_path)
+                .map_err(|e| format!("Failed to read ZP LZSA: {}", e))?,
             block9_addr,
             f8_ff_data,
             config: config.clone(),
+            relocated_size,
+            ram_lzsa_size,
+            restore_code_size,
+            load_save_code_size,
         })
     }
 
-    pub fn generate_prg(&self, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let relocated_binary = self.assemble_relocated_code()?;
-
-        if relocated_binary.len() > 256 {
-            return Err(format!(
-                "Relocated code too large: {} bytes (max 256)",
-                relocated_binary.len()
-            ).into());
-        }
-
-        // Write temporary data files for .incbin
-        self.write_data_files(&relocated_binary)?;
-
+    /// Generate CRT restore code binary (to be placed at $0340 in RAM)
+    pub fn generate_restore_code_binary(&self) -> Result<Vec<u8>, String> {
         let main_asm = self.generate_main_code_asm6502();
-        let prg_binary = self.assemble_with_asm6502(&main_asm)?;
-
-        fs::write(output_path, &prg_binary)?;
-
-        Ok(())
+        assemble_to_bytes(&main_asm)
     }
 
-    fn write_data_files(&self, relocated_binary: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-        let work = self.config.work_str();
+    /// Generate data copying code
+    fn generate_data_copy_code(&self, ram_end_data_start: usize, end_data_size: usize) -> String {
+        let roml_bank_start = 0x8000usize;
+        let roml_bank_size = 8192usize;
+        let roml_end_data_start = roml_bank_start + self.restore_code_size + self.load_save_code_size;
 
-        fs::write(format!("{}/color.lzsa", work), &self.color_lzsa)?;
-        fs::write(format!("{}/vic.lzsa", work), &self.vic_lzsa)?;
-        fs::write(format!("{}/sid.lzsa", work), &self.sid_lzsa)?;
-        fs::write(format!("{}/cia1.bin", work), &self.cia1_bin)?;
-        fs::write(format!("{}/cia2.bin", work), &self.cia2_bin)?;
-        fs::write(format!("{}/zp.lzsa", work), &self.zp_lzsa)?;
-        fs::write(format!("{}/relocated.bin", work), relocated_binary)?;
-        fs::write(format!("{}/ram.lzsa", work), &self.ram_lzsa)?;
+        let source_bank = (roml_end_data_start - roml_bank_start) / roml_bank_size;
+        let source_hi = (roml_end_data_start >> 8) & 0xFF;
+        let source_lo = roml_end_data_start & 0xFF;
+        let ram_dest_hi = (ram_end_data_start >> 8) & 0xFF;
+        let ram_dest_lo = ram_end_data_start & 0xFF;
 
-        Ok(())
-    }
+        let disable_mode = if self.load_save_code_size > 0 {
+            "; Use $03 (allow re-enable later for LOAD/SAVE)\n    LDA #$03"
+        } else {
+            "; Use $04 (full disable - original behavior)\n    LDA #$04"
+        };
 
-    fn assemble_with_asm6502(&self, asm_source: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        use crate::asm_wrapper::Assembler6502Wrapper;
+        format!(
+            r#"    ; =============================================================================
+    ; DIRECT copy from ROML to final position (NO temp buffer)
+    ; =============================================================================
 
-        let mut assembler = Assembler6502Wrapper::new();
-        let prg_binary = assembler.assemble_prg(asm_source)
-            .map_err(|e| format!("Assembly failed: {:?}", e))?;
+    LDA #$37
+    STA $01
 
-        Ok(prg_binary)
-    }
+    LDA #${:02X}
+    STA $F7
+    STA EASYFLASH_ROML
 
-    fn assemble_relocated_code(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        use crate::asm_wrapper::Assembler6502Wrapper;
+    LDA #$33
+    STA $01
 
-        let asm_source = self.generate_relocated_decompressor();
+    LDA #${:02X}
+    STA $FC
+    LDA #${:02X}
+    STA $FB
 
-        let mut assembler = Assembler6502Wrapper::new();
-        let binary = assembler.assemble_bytes(&asm_source)
-            .map_err(|e| format!("Relocated code assembly failed: {:?}", e))?;
+    LDA #${:02X}
+    STA $FE
+    LDA #${:02X}
+    STA $FD
 
-        Ok(binary)
+    LDA #${:02X}
+    STA $F8
+    LDA #${:02X}
+    STA $F9
+
+copy_loop:
+    LDA $F8
+    BNE copy_byte
+    LDA $F9
+    BEQ copy_done
+
+copy_byte:
+    LDY #$00
+    LDA ($FB),Y
+    STA ($FD),Y
+
+    INC $FB
+    BNE skip_src_hi
+    INC $FC
+    LDA $FC
+    CMP #$A0
+    BNE skip_src_hi
+    LDA #$37
+    STA $01
+    INC $F7
+    LDA $F7
+    STA EASYFLASH_ROML
+    LDA #$33
+    STA $01
+    LDA #$80
+    STA $FC
+    LDA #$00
+    STA $FB
+skip_src_hi:
+
+    INC $FD
+    BNE skip_dst_hi
+    INC $FE
+skip_dst_hi:
+
+    LDA $F9
+    BNE dec_lo
+    DEC $F8
+dec_lo:
+    DEC $F9
+
+    JMP copy_loop
+
+copy_done:
+    LDA #$37
+    STA $01
+
+    {}
+    STA $DE02
+
+    LDA $DC0D
+    LDA $DD0D
+    LDA #$FF
+    STA $D019
+
+    LDA #$34
+    STA $01
+"#,
+            source_bank,
+            source_hi,
+            source_lo,
+            ram_dest_hi,
+            ram_dest_lo,
+            (end_data_size >> 8) & 0xFF,
+            end_data_size & 0xFF,
+            disable_mode
+        )
     }
 
     fn generate_main_code_asm6502(&self) -> String {
-        let work = self.config.work_str();
+        let ram_data_size = self.relocated_size + self.ram_lzsa_size;
+        let end_data_start = 0x10000 - ram_data_size;
+        let ram_lzsa_start = end_data_start + self.relocated_size;
 
-        // Convert Windows backslashes to forward slashes for cross-platform compatibility
-        let work_path = work.replace('\\', "/");
+        let data_copy_code = self.generate_data_copy_code(end_data_start, ram_data_size);
 
-        format!(r#"; C64 LZSA1 Snapshot Loader - Conservative Optimization
-*=$0801
+        // Generate inline data bytes
+        let color_data = self.format_bytes(&self.color_lzsa);
+        let vic_data = self.format_bytes(&self.vic_lzsa);
+        let sid_data = self.format_bytes(&self.sid_lzsa);
+        let cia1_data = self.format_bytes(&self.cia1_bin);
+        let cia2_data = self.format_bytes(&self.cia2_bin);
+        let zp_data = self.format_bytes(&self.zp_lzsa);
+        let f8_ff_bytes = self.format_bytes(&self.f8_ff_data);
 
-; BASIC stub: SYS 2061
-.byte $0B,$08,$0A,$00,$9E,$32,$30,$36,$31,$00,$00,$00
+        format!(
+            r#"; C64 EasyFlash CRT Snapshot Restore Code
+; Entry point: $0340 (called from minimal trampoline @ $0100)
+*=$0340
 
-; LZSA1 zero page variables
+EASYFLASH_ROML = $DE00
+EASYFLASH_CONTROL = $DE02
+
+RELOCATED_SIZE = {}
+RAM_DATA_SIZE = {}
+END_DATA_START = ${:04X}
+RAM_LZSA_START = ${:04X}
+
 LZSA_SRC_LO = $FC
 LZSA_SRC_HI = $FD
 LZSA_DST_LO = $FE
@@ -144,7 +241,14 @@ start:
     SEI
     CLD
 
-    ; Clear all pending interrupts
+{}
+
+    LDA #$35
+    STA $01
+
+    LDA #$2F
+    STA $00
+
     LDA $DC0D
     LDA $DD0D
     LDA #$7F
@@ -155,8 +259,6 @@ start:
     LDA #$FF
     STA $D019
 
-    LDA #$35
-    STA $01
     LDX #$FF
     TXS
 
@@ -180,8 +282,6 @@ start:
     STA LZSA_DST_HI
     JSR decompress_lzsa1
 
-    ; OPTIMIZATION: Setup VIC raster position early (moved from $01xx)
-    ; This is 100% safe - no interrupts enabled yet
     LDA $D011
     STA $D011
     LDA $D012
@@ -203,9 +303,7 @@ start:
     STA LZSA_DST_HI
     JSR decompress_lzsa1
 
-; =============================================================================
-; CIA1 Complete Setup (100% safe - no timers started yet)
-; =============================================================================
+; CIA1 Setup
     LDA #$7F
     STA $DC0D
     LDA #$00
@@ -221,7 +319,6 @@ start:
     LDA cia1_data+1
     STA $DC01
 
-    ; Timer A: Write counter, force-load, write latch
     LDA cia1_data+16
     STA $DC04
     LDA cia1_data+17
@@ -235,7 +332,6 @@ start:
     LDA cia1_data+5
     STA $DC05
 
-    ; Timer B: Write counter, force-load, write latch
     LDA cia1_data+18
     STA $DC06
     LDA cia1_data+19
@@ -249,7 +345,6 @@ start:
     LDA cia1_data+7
     STA $DC07
 
-    ; TOD registers (hours->minutes->seconds->tenths)
     LDA cia1_data+11
     STA $DC0B
     LDA cia1_data+10
@@ -259,7 +354,6 @@ start:
     LDA cia1_data+8
     STA $DC08
 
-    ; SDR and control registers (WITHOUT start bit - safe!)
     LDA cia1_data+12
     STA $DC0C
     LDA cia1_data+14
@@ -269,9 +363,7 @@ start:
     AND #$FE
     STA $DC0F
 
-; =============================================================================
-; CIA2 Complete Setup (100% safe - no timers started yet)
-; =============================================================================
+; CIA2 Setup
     LDA #$7F
     STA $DD0D
     LDA #$00
@@ -331,9 +423,7 @@ start:
     AND #$FE
     STA $DD0F
 
-; =============================================================================
 ; Decompress Zero Page
-; =============================================================================
     LDA #<zp_data
     STA LZSA_SRC_LO
     LDA #>zp_data
@@ -344,51 +434,14 @@ start:
     STA LZSA_DST_HI
     JSR decompress_lzsa1
 
-    ; Switch to RAM-only mode
-    LDA #$34
-    STA $01
-
-    LDA #<RAM_DATA_SIZE
+    LDA #$00
     STA $F8
-    LDA #>RAM_DATA_SIZE
     STA $F9
+    STA $FA
+    STA $FB
 
-    LDA #<(RAM_DATA_END-1)
-    STA $FE
-    LDA #>(RAM_DATA_END-1)
-    STA $FF
-
-    LDA #$FF
-    STA $FC
-    STA $FD
-
-    ; Copy RAM data block to top of memory (backward)
-    LDY #$00
-MVLP:
-    LDA ($FE),Y
-    STA ($FC),Y
-    LDA $FE
-    BNE MV1
-    DEC $FF
-MV1:
-    DEC $FE
-    LDA $FC
-    BNE MV2
-    DEC $FD
-MV2:
-    DEC $FC
-    LDA $F8
-    BNE MV3
-    DEC $F9
-MV3:
-    DEC $F8
-    LDA $F8
-    ORA $F9
-    BNE MVLP
-
-    ; Copy relocated decompressor to $0100-$01FF
-    LDX #<($10000 - RAM_DATA_SIZE)
-    LDY #>($10000 - RAM_DATA_SIZE)
+    LDX #<END_DATA_START
+    LDY #>END_DATA_START
     STX $FE
     STY $FF
     LDY #$00
@@ -399,50 +452,38 @@ CPLP:
     CPY #<RELOCATED_SIZE
     BNE CPLP
 
-    LDA #<($10000 - RAM_DATA_SIZE + RELOCATED_SIZE)
+    LDA #<RAM_LZSA_START
     STA LZSA_SRC_LO
-    LDA #>($10000 - RAM_DATA_SIZE + RELOCATED_SIZE)
+    LDA #>RAM_LZSA_START
     STA LZSA_SRC_HI
 
-    ; Start at $0200 - skip $0100-$01FF!
     LDA #$00
     STA LZSA_DST_LO
     LDA #$02
     STA LZSA_DST_HI
 
+    LDA #$34
+    STA $01
+
     JMP $0100
 
-; =============================================================================
 ; Data section
-; =============================================================================
 color_data:
-    .incbin "{}/color.lzsa"
+{}
 vic_data:
-    .incbin "{}/vic.lzsa"
+{}
 sid_data:
-    .incbin "{}/sid.lzsa"
+{}
 cia1_data:
-    .incbin "{}/cia1.bin"
+{}
 cia2_data:
-    .incbin "{}/cia2.bin"
+{}
 zp_data:
-    .incbin "{}/zp.lzsa"
+{}
+f8_ff_data:
+{}
 
-ram_data_start:
-relocated_code:
-    .incbin "{}/relocated.bin"
-relocated_end:
-RELOCATED_SIZE = relocated_end-relocated_code
-
-ram_compressed:
-    .incbin "{}/ram.lzsa"
-ram_data_end:
-RAM_DATA_SIZE = ram_data_end-ram_data_start
-RAM_DATA_END = ram_data_end
-
-; =============================================================================
 ; LZSA1 Decompressor
-; =============================================================================
 decompress_lzsa1:
     LDY #0
     LDX #0
@@ -597,11 +638,26 @@ get_byte:
     INC LZSA_SRC_HI
 got_byte:
     RTS
-"#, work_path, work_path, work_path, work_path, work_path, work_path, work_path, work_path)
+"#,
+            self.relocated_size,
+            ram_data_size,
+            end_data_start,
+            ram_lzsa_start,
+            data_copy_code,
+            color_data,
+            vic_data,
+            sid_data,
+            cia1_data,
+            cia2_data,
+            zp_data,
+            f8_ff_bytes
+        )
     }
 
-    fn generate_relocated_decompressor(&self) -> String {
-        format!(r#"*=$0100
+    /// Generate relocated decompressor binary
+    pub fn generate_relocated_decompressor(&self) -> Result<Vec<u8>, String> {
+        let asm_source = format!(
+            r#"*=$0100
 
 LZSA_SRC_LO = $FC
 LZSA_SRC_HI = $FD
@@ -611,7 +667,6 @@ LZSA_CMDBUF = $F9
 LZSA_WINPTR = $FA
 LZSA_OFFSET = $FA
 
-; Relocated LZSA1 decompressor in page 1
 DECOMPRESS_LZSA1:
     LDY #0
     LDX #0
@@ -754,7 +809,8 @@ extra_word:
     BNE check_length
 
 finished:
-    ; Decompression complete - jump to block 9
+    LDA #$30
+    STA $01
     JMP ${:04X}
 
 get_byte:
@@ -764,6 +820,23 @@ get_byte:
     INC LZSA_SRC_HI
 got_byte:
     RTS
-"#, self.block9_addr)
+"#,
+            self.block9_addr
+        );
+
+        assemble_to_bytes(&asm_source)
+    }
+
+    fn format_bytes(&self, data: &[u8]) -> String {
+        if data.is_empty() {
+            return "    .byte $00".to_string();
+        }
+
+        let mut lines = Vec::new();
+        for chunk in data.chunks(16) {
+            let bytes: Vec<String> = chunk.iter().map(|b| format!("${:02X}", b)).collect();
+            lines.push(format!("    .byte {}", bytes.join(",")));
+        }
+        lines.join("\n")
     }
 }

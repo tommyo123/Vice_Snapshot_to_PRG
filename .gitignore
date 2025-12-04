@@ -10,6 +10,7 @@
 # ---- JetBrains RustRover / IntelliJ ----
 .idea/
 *.iml
+*.json
 out/
 
 # ---- VS Code ----

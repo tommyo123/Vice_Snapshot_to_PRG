@@ -8,9 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **EasyFlash CRT output** - Convert snapshots to bootable EasyFlash cartridges
+    - Boots directly from cartridge without loading
+    - Same full machine state restoration as PRG
+- **LOAD/SAVE hooking for CRT** - Embed PRG files in cartridge ROM
+    - Intercepts KERNAL LOAD vector to serve files from ROM
+    - SAVE is silently ignored (ROM is read-only)
+    - Trampoline auto-placed at `$0100` or `$0334` based on stack pointer
+    - Files indexed with 16-char PETSCII filenames
+- **Manual RAM block specification** - GUI dialog to add free blocks when auto-detection fails
+    - Specify address range for unused memory
+    - Region is zeroed before compression
+- **CLI CRT support** - New options for CRT generation
+    - `--crt` / `--prg` flags (auto-detected from extension)
+    - `--name <name>` for cartridge name (max 32 chars)
+    - `--include-dir <dir>` to embed PRG files
+
 ### Changed
-### Fixed
-### Removed
+- CLI renamed conceptually to PRG/CRT converter
+- README rewritten for clarity
 
 ## [1.0.0] - 2025-10-22
 

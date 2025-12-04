@@ -1,325 +1,170 @@
-# VICE Snapshot to PRG Converter
+# VICE Snapshot → PRG / EasyFlash CRT Converter
 
-A utility that converts VICE 3.6-3.9 x64sc emulator snapshots into self-restoring PRG files that run on real Commodore 64 hardware.
+Converts VICE x64sc (C64SC) snapshots into self-restoring PRG files or EasyFlash CRT cartridges that boot directly on a real Commodore 64.
 
-## Overview
+The converter reconstructs the full machine state: CPU registers, RAM, Color RAM, VIC-II, SID, CIA1/CIA2, stack pointer, zero-page, vectors, I/O mode – everything needed to return to the exact snapshot moment.
 
-This tool takes a VICE snapshot (`.vsf` file) and transforms it into a standalone PRG file that restores the complete machine state on a real C64—including CPU registers, memory, VIC-II graphics, SID audio, CIA timers, color RAM, and zero page—exactly as it was when the snapshot was taken.
+## Status & License
 
-**Inspired by the Action Replay cartridge's "BACKUP" feature**, but works with VICE emulator snapshots and produces files that run independently on any C64 without special hardware.
+- **Version:** 1.90-Beta
+- **License:** MIT
 
-## Features
+## What it does
 
-- Complete machine state restoration (CPU, RAM, VIC-II, SID, CIA1, CIA2, color RAM, zero page)
-- LZSA1 compression for fast decompression on 6502
-- Self-contained PRG files—no cartridge or loader required
-- Minimal memory overhead with intelligent free-space detection
-- GUI and CLI versions included
+- Reads VICE snapshot format 2.0 taken with x64sc (C64SC).
+- Restores the machine state faithfully on real hardware.
+- Produces:
+  - Self-extracting **PRG**, or
+  - **EasyFlash CRT** with optional LOAD-intercept for embedded PRG files.
 
-## Download
+Snapshot parsing is intentionally strict: anything other than format 2.0 / C64SC is rejected to avoid undefined results.
 
-**Latest release:** [Download from GitHub Releases](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
+Tested with VICE 3.6–3.9.
 
-### Windows
-- **MSI Installer** (recommended): Installs both GUI and CLI with shortcuts
-- **Portable ZIP**: Extract and run anywhere
+## Downloads
 
-### Linux
-- **tar.gz**: Pre-compiled binaries for Ubuntu 24.04+, Debian 12+, and compatible distributions
+See [Releases](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases) for prebuilt binaries.
 
-### macOS
-- **tar.gz**: Pre-compiled binaries (untested)
+Available as:
+- **Windows:** MSI installer + portable ZIP
+- **Linux/macOS:** tar.gz archives
 
-### Security Warning
+(Executables are unsigned; Windows will show a warning.)
 
-Windows may show security warnings because the installer is not code-signed (code signing certificates cost hundreds of dollars per year, which is not sustainable for a free hobby project).
+## Requirements and limitations
 
-**The file is safe.** To run:
+### Snapshot requirements
 
-1. **Browser download warning:** Click "Keep"
-2. **Windows SmartScreen:** Click "More info" → "Run anyway"
+- Must be from VICE **x64sc** (the C64SC model).
+- Must be snapshot **format 2.0**.
+- Other formats and models (x64, xscpu64, etc.) are intentionally unsupported.
 
-Alternatively, build from source to verify the code yourself.
+### Clear RAM before taking the snapshot
 
-## System Requirements
+To ensure good compression and reliable free-area detection, RAM should be filled with a single byte before loading your program.
 
-### Windows
-- **Tested:** Windows 11 (64-bit)
-- **Expected to work:** Windows 8, 10 (64-bit)
-- **Extended/Unofficial Support:** Windows 7 (Requires VxKex for API compatibility, https://github.com/i486/VxKex)
-- **Not supported:** 32-bit Windows, Windows XP/Vista
-
-Requires Visual C++ Redistributable 2015-2022 or bundled runtime.
-
-### Linux
-- **Tested:** Ubuntu 24.04
-- **Expected to work:** Debian 12+, other modern distributions with compatible glibc
-
-### macOS
-- **Untested:** Binaries provided but not verified
-
-## Important Limitations
-
-### VICE Version Compatibility
-
-**Only works with VICE 3.6-3.9 x64sc snapshots.**
-
-VICE's snapshot format changes between versions. This converter has been developed and tested against VICE 3.6-3.9 x64sc snapshots, with most testing done on VICE 3.9. No guarantee it will work with other versions.
-
-### Required Pre-Snapshot Preparation
-
-Before taking a snapshot in VICE, initialize memory:
-
+In the VICE monitor:
 ```
 f 0000 ffff 00
 reset
 ```
 
-**Why?** The converter needs large contiguous blocks of identical bytes in RAM to place restoration code and data. Without initialization, conversion may fail with allocation errors.
+This produces large uniform regions that the converter can use for restore code and compressed blocks. Without this, memory becomes fragmented and the converter may fail to allocate space.
 
-### Avoid "Smart Attach" (Unless Configured)
+### About Smart Attach
 
-**Do not use "Smart attach..."** when loading programs before snapshots, unless VICE is configured to initialize memory to zeros on reset.
+Smart Attach uses VICE's realistic C64-style memory initialization, not a uniform fill. This results in a patchy, patterned RAM layout that:
 
-Smart attach can fragment memory, causing allocation failures. Instead:
-- Use standard `LOAD "*",8,1` commands, or
-- Configure VICE: Settings → C64 → RAM reset pattern → All zeros
+- dramatically reduces compressible regions,
+- reduces compression ratios,
+- increases the chance of restore-block allocation failures.
 
-### Stack Pointer Considerations
+You can use Smart Attach, but only if you manually clear RAM first.
 
-The restoration code places its final stage between `$0100-$01FF` (the 6502 stack area), ideally just below the current stack pointer with a safety margin.
+### Stack considerations
 
-If insufficient space exists below the stack pointer, the code is placed at the top of the stack area (`$01FF` and below). This is risky if the original program had pushed the stack very high, as restoration code may be overwritten.
+If the original program leaves the stack unusually low, the converter automatically switches to an alternative restore trampoline. This works for both PRG and CRT output.
 
-Despite this risk, the approach has been successfully tested with various programs. The converter will always attempt conversion, but success is not guaranteed in all edge cases.
+### Manual RAM blocks
 
-## Quick Start
+If conversion fails due to insufficient free memory, the GUI offers to add RAM blocks manually. Specify an address range (e.g., `$0800` to `$08FF`) for memory you know is unused. The region will be zeroed and made available for allocation.
 
-### GUI Version
+## Output formats
 
-1. **Prepare VICE 3.6-3.9 x64sc:**
+### PRG
+
+- Self-restoring executable.
+- Uses LZSA1-compressed segments (RAM, VIC, Color RAM).
+- Small, efficient restore stub.
+- Returns to the snapshot PC/flags exactly.
+
+### EasyFlash CRT
+
+- Boots directly from cartridge.
+- Restore code and compressed data live in ROM.
+- Can embed PRG files and intercept `LOAD "NAME",8,1`.
+- Automatically picks trampoline address (`$0100` or `$0334`) based on stack position.
+
+**ROM layout:**
+- **ROML** (`$8000–$9FFF`): Restore code, decompressor, compressed blocks
+- **ROMH** (`$A000–$BFFF`): Startup vectors, LOAD/SAVE hook, file metadata
+
+## Usage
+
+### CLI
+
+```bash
+# PRG
+vice-snapshot-to-prg-converter-cli input.vsf output.prg
+
+# CRT
+vice-snapshot-to-prg-converter-cli input.vsf output.crt
+
+# CRT with custom name and embedded PRGs
+vice-snapshot-to-prg-converter-cli --crt --name "My Game" --include-dir ./prg input.vsf output.crt
+```
+
+**Options:**
+- `--prg` / `--crt` – Force format (optional, auto-detected from extension)
+- `--name <name>` – Cartridge name (max 32 chars, CRT only)
+- `--include-dir <dir>` – Embed PRG files from directory (CRT only)
+
+Output files are overwritten without prompting.
+
+### GUI
+
+The GUI provides the same functionality with file browsers and a CRT options tab. If conversion fails, a dialog offers to add manual RAM blocks.
+
+### Recommended workflow
+
+1. In VICE monitor (`Alt+H`):
    ```
-   Alt+H (enter monitor)
    f 0000 ffff 00
    reset
-   x (exit monitor)
+   x
    ```
+2. Load your program (avoid Smart Attach unless RAM was cleared).
+3. Create a `.vsf` snapshot.
+4. Run the converter.
+5. Transfer and run the resulting PRG, or flash the CRT.
 
-2. **Load your program** (avoid "Smart attach..." unless configured)
+## Restore engine
 
-3. **Take snapshot:** File → Save snapshot image (.vsf)
+1. BASIC stub transfers control to the restore loader.
+2. Restores Color RAM, VIC-II and SID registers.
+3. Restores CIA state without triggering timers prematurely.
+4. Restores zero page and switches I/O mode.
+5. Decompresses LZSA blocks into RAM.
+6. Restores page 1, stack and system vectors.
+7. Executes RTI back to the snapshot's PC and flags.
 
-4. **Run converter:**
-    - Launch GUI application
-    - Select `.vsf` input file
-    - Choose `.prg` output file
-    - Click "Convert"
-
-5. **Transfer to C64:**
-    - Transfer `.prg` to C64 (disk, SD card, etc.)
-    - `LOAD "yourfile.prg",8,1`
-    - `RUN`
-
-### CLI Version
-
-Perfect for automation and batch processing:
-
-```bash
-vice-snapshot-to-prg-converter-cli input.vsf output.prg
-```
-
-**Note:** CLI version automatically overwrites output files without prompting.
-
-## Technical Details
-
-### Compression Algorithm
-
-Uses **LZSA1** (Lempel-Ziv-Style Algorithm) by Emmanuel Marty, specifically engineered for fast decompression on 8-bit systems:
-
-- **Fast decompression:** ~90% of LZ4 speed on 6502
-- **Good compression ratio:** Better than LZ4 while maintaining excellent speed
-- **Small decompression code:** Minimal memory footprint
-- **Far superior to Action Replay's RLE:** Much more efficient than simple Run-Length Encoding
-
-### Memory Layout Strategy
-
-The converter scans `$0200-$FFEF` for sequences of 32+ consecutive identical bytes, allocating these free blocks for:
-
-- **Blocks 1-8:** Preservation of stack area (`$0100-$01FF`) and critical zero page (`$F8-$FF`)
-- **Block 9:** Core restoration code (restores blocks 1-8, cleans up blocks 1-8, jumps to block 10)
-- **Block 10:** Final setup code (wipes block 9, restores `$F8-$FF`, prepares registers, jumps to `$01xx`)
-- **Compressed data:** LZSA1-compressed segments for different memory regions
-
-### Restoration Process
-
-1. BASIC stub at `$0801` executes SYS to `$080D`
-2. Decompress Color RAM, VIC-II, SID (while I/O enabled)
-3. Setup VIC raster position and clear interrupts
-4. Restore CIA1 and CIA2 registers completely (without starting timers)
-5. Decompress zero page (`$02-$F7`)
-6. Switch to RAM-only mode (`$01 = $34`)
-7. Copy compressed main RAM data and relocated decompressor to top of memory
-8. Copy relocated decompressor to `$0100-$01FF`
-9. Jump to relocated decompressor which decompresses main RAM (`$0200-$FFEF`)
-10. **Block 9** executes:
-    - Restores original page 1 (`$0100-$01FF`) from blocks 1-8
-    - Restores vectors (`$FFF0-$FFFF`)
-    - Restores stack pointer
-    - Cleans up blocks 1-8
-    - Jumps to block 10
-11. **Block 10** executes:
-    - Wipes block 9
-    - Restores zero page (`$F8-$FF`)
-    - Preloads A, X, Y registers
-    - Jumps to final restore code (now in restored `$01xx`)
-12. **Final restore code** executes:
-    - Wipes block 10
-    - Restores CPU port DDR (`$00`)
-    - Restores CPU port data (`$01 = $35`)
-    - Configures VIC IRQ and CIA interrupts (without starting timers)
-    - Starts CIA timers with original control register values
-    - Builds RTI frame on stack with original PC and status
-    - Executes RTI to resume at original PC
-
-### Assembly and Compression
-
-The converter uses:
-- **[asm6502](https://github.com/tommyo123/asm6502):** Embedded Rust 6502 assembler for generating restoration code
-- **[lzsa-sys](https://github.com/tommyo123/lzsa-sys):** Rust wrapper around Emmanuel Marty's LZSA compression
-
-Both are integrated directly, eliminating the need for external tools.
-
-## Installation
-
-### Windows - Using the Installer (Recommended)
-
-1. Download `.msi` installer from [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
-2. Run installer and follow instructions
-3. Installs to `Program Files\vice-snapshot-to-prg-converter\` (customizable)
-4. Includes both GUI and CLI versions
-5. Creates desktop and Start Menu shortcuts
-
-### Windows - Portable Installation
-
-1. Download `.zip` package from [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
-2. Extract to any directory
-3. Run:
-    - `vice-snapshot-to-prg-converter.exe` (GUI)
-    - `vice-snapshot-to-prg-converter-cli.exe` (CLI)
-
-### Linux / macOS
-
-1. Download `.tar.gz` from [releases page](https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/latest)
-2. Extract: `tar -xzf vice-snapshot-to-prg-converter-*.tar.gz`
-3. Make executable: `chmod +x vice-snapshot-to-prg-converter*`
-4. Run:
-    - `./vice-snapshot-to-prg-converter` (GUI)
-    - `./vice-snapshot-to-prg-converter-cli input.vsf output.prg` (CLI)
-
-## CLI Usage
-
-```bash
-# Basic usage
-vice-snapshot-to-prg-converter-cli input.vsf output.prg
-
-# Show help
-vice-snapshot-to-prg-converter-cli --help
-```
-
-**Windows:**
-```cmd
-cd "C:\Program Files\vice-snapshot-to-prg-converter"
-vice-snapshot-to-prg-converter-cli.exe snapshot.vsf output.prg
-```
-
-**Linux/macOS:**
-```bash
-./vice-snapshot-to-prg-converter-cli snapshot.vsf output.prg
-```
-
-## Building from Source
-
-Requirements:
-- Rust toolchain (2024 edition or later)
-- Platform-specific dependencies:
-    - **Windows:** Visual Studio build tools or MinGW
-    - **Linux:** X11, Cairo, Pango, FLTK dependencies
-    - **macOS:** Xcode command-line tools
-
-```bash
-# Build both GUI and CLI (release)
-cargo build --release
-
-# Build only GUI
-cargo build --release --bin vice-snapshot-to-prg-converter
-
-# Build only CLI
-cargo build --release --bin vice-snapshot-to-prg-converter-cli
-```
-
-Binaries created in `target/release/`.
+Compression uses LZSA1, which approaches LZ4-level decoding speed on 6502 while keeping the decompressor compact.
 
 ## Troubleshooting
 
-### "Failed to allocate block X"
-Insufficient contiguous free memory. Run `f 0000 ffff 00` and `reset` in VICE monitor before loading the program and taking the snapshot.
+**"Failed to allocate block …"**
+RAM was not uniform. Clear RAM with `f 0000 ffff 00` and retry. Alternatively, use the GUI to add manual RAM blocks.
 
-### "Stack too low" error
-The program's stack pointer is in an unusual position. The converter may still attempt placement at `$01FF`, but success is not guaranteed.
+**Restore boots but crashes**
+The snapshot was taken with fragmented memory or odd stack state. Clear RAM, avoid Smart Attach, reload and try again.
 
-### Crashes on restore
-Can happen if:
-- The original program uses unusual memory configurations
-- Stack pointer positioning conflicts with restoration code
-- The program modifies memory in ways not captured by the snapshot
+**CRT LOAD-hook doesn't find files**
+Check that filenames (in `--include-dir`) are PETSCII-safe and 16 chars or fewer.
 
-### VICE version mismatch
-If you get parsing errors or corrupted output, verify you're using **VICE 3.6-3.9 x64sc** for creating the snapshot.
+## Building from source
 
-### Linux: Missing library errors
-Install required dependencies:
+Requires the Rust toolchain (2024 edition).
+
 ```bash
-# Ubuntu/Debian
-sudo apt-get install libx11-6 libxext6 libxft2 libxinerama1 libcairo2 libpango-1.0-0
+# CLI only
+cargo build --release --bin vice-snapshot-to-prg-converter-cli
+
+# GUI + CLI
+cargo build --release
 ```
-
-Pre-built binaries are compiled on Ubuntu 24.04. For older distributions, build from source.
-
-## Project Status
-
-This is a **hobby project** developed for fun and educational purposes. Primary goals:
-
-1. Explore whether a VICE-to-PRG converter was technically feasible
-2. Implement a solution inspired by Action Replay cartridge
-3. Experiment with modern compression techniques on vintage hardware
-
-**No guarantees or warranties provided.** The tool works with VICE 3.6-3.9 snapshots (most testing done on 3.9). No commitment to support future VICE versions, as the snapshot format changes frequently.
-
-## License
-
-MIT License - Copyright (c) 2025 Tommy Olsen
-
-See LICENSE.md for full license text.
-
-You are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the software.
 
 ## Credits
 
-**Development:** Tommy Olsen
-
-**Compression Algorithm:**
-- LZSA by Emmanuel Marty - Fast compression for 8-bit systems
-
-**Inspiration:**
-- Action Replay cartridge series by Datel Electronics
-- VICE development team
-
-## Version History
-
-**Version 1.0** - Initial release
-- Complete machine state restoration
-- LZSA1 compression
-- Optimized two-block architecture (Block 9 + Block 10)
-- GUI and CLI versions
-- Windows MSI installer
-- Linux and macOS support
+- Emmanuel Marty – LZSA
+- The VICE team
+- Various freezer cartridges for historical inspiration

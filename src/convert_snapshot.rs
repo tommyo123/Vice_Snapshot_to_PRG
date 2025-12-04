@@ -13,12 +13,19 @@ use crate::make_prg_asm::MakePRGAsm;
 
 pub struct ConvertSnapshot {
     config: Config,
+    extra_ram_blocks: Vec<(u16, u16)>,
 }
 
 impl ConvertSnapshot {
     /// Create a new converter with the given configuration
     pub fn new(config: Config) -> Self {
-        Self { config }
+        Self::with_extra_blocks(config, Vec::new())
+    }
+
+    /// Create a new converter with extra RAM blocks
+    /// Each block is (address, count)
+    pub fn with_extra_blocks(config: Config, extra_ram_blocks: Vec<(u16, u16)>) -> Self {
+        Self { config, extra_ram_blocks }
     }
 
     /// Convert a VSF snapshot to a PRG file
@@ -45,9 +52,17 @@ impl ConvertSnapshot {
         let mut f8_ff_data = [0u8; 8];
         f8_ff_data.copy_from_slice(&snap.mem.ram[0xF8..=0xFF]);
 
-        let mut ram_finder = FindRam::new(&snap.mem.ram);
-
+        // Zero out manually specified extra blocks before compression
         let mut ram = snap.mem.ram.clone();
+        for &(address, count) in &self.extra_ram_blocks {
+            let start = address as usize;
+            let end = (start + count as usize).min(ram.len());
+            for i in start..end {
+                ram[i] = 0;
+            }
+        }
+
+        let mut ram_finder = FindRam::with_extra_blocks(&ram, &self.extra_ram_blocks);
         let patch_mem = PatchMem::new(&snap, &mut *ram, &mut ram_finder)
             .map_err(|e| format!("Memory patching failed: {}", e))?;
 

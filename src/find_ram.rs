@@ -25,6 +25,11 @@ pub struct FindRam {
 impl FindRam {
     /// Scan RAM from $0200-$FFEF for sequences of 32+ identical consecutive bytes
     pub fn new(ram: &[u8; 65536]) -> Self {
+        Self::with_extra_blocks(ram, &[])
+    }
+
+    /// Scan RAM and add extra manually specified blocks
+    pub fn with_extra_blocks(ram: &[u8; 65536], extra_blocks: &[(u16, u16)]) -> Self {
         let mut blocks = Vec::new();
 
         const START_ADDR: usize = 0x0200;
@@ -50,6 +55,17 @@ impl FindRam {
                 addr += count;
             } else {
                 addr += 1;
+            }
+        }
+
+        // Add extra manually specified blocks (address, count) with value 0
+        for &(address, count) in extra_blocks {
+            if count >= 32 {
+                blocks.push(RamBlock {
+                    address,
+                    value: 0,
+                    count,
+                });
             }
         }
 
