@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-02-27
+
+### Added
+- **Magic Desk CRT output** - New cartridge format option
+    - 8K cart mode: ROML only (`$8000–$9FFF`), no ROMH
+    - CBM80 boot signature with trampoline-based restore
+    - Permanent cartridge disable via `$DE00` bit 7
+    - Minimum 8 banks, maximum 64 banks (512 KB)
+    - Hardware type 19, EXROM=0, GAME=1
+- **Cartridge type selector in GUI** - Dropdown to choose between EasyFlash and Magic Desk
+    - LOAD/SAVE hooking automatically disabled for Magic Desk
+- **CLI `--magic-desk` flag** - Force Magic Desk CRT format output
+- **VICE 3.10 support** - Tested and confirmed working with VICE 3.10
+
+### Changed
+- **GUI improvements**
+    - CRT tab renamed from "CRT Output (EasyFlash)" to "CRT Output"
+    - Output filename now defaults to the snapshot filename with the correct extension (.prg/.crt)
+    - Output label updated from "EasyFlash CRT" to generic "CRT"
+- **CLI help text** updated to document all three output formats and Magic Desk options
+- **VICE version support** updated from 3.6–3.9 to 3.6–3.10 throughout all documentation and UI
+
+### Technical Details
+- New modules: `convert_snapshot_magic_desk_crt`, `make_magic_desk_boot_asm`, `make_magic_desk_crt_asm`
+- `CartridgeType` enum extended with `MagicDesk` variant (chip type 0 = ROM vs EasyFlash chip type 2 = Flash)
+- Magic Desk uses byte-level copy loop from ROML with bank switching at `$A000` boundary
+- Two-pass assembly for boot code and restore code size calculation
+
 ## [1.9.0] - 2025-12-04
 
 ### Added
@@ -69,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - More predictable memory requirements
 
 ### Known Limitations
-- Only supports VICE 3.6-3.9 x64sc snapshots (snapshot format changes between VICE versions)
+- Only supports VICE 3.6-3.10 x64sc snapshots (snapshot format changes between VICE versions)
 - Requires memory initialization (`f 0000 ffff 00` + `reset`) before snapshot
 - Stack pointer placement may be risky in edge cases with unusual stack configurations
 - "Smart attach..." should be avoided unless VICE is configured to initialize memory to zeros on reset
@@ -130,7 +158,7 @@ All packages now include both GUI and CLI versions:
 
 ### Added
 - Initial beta release
-- GUI application for converting VICE 3.6-3.9 x64sc snapshots to PRG files
+- GUI application for converting VICE 3.6-3.10 x64sc snapshots to PRG files
 - LZSA1 compression for efficient snapshot compression
 - Automatic memory patching and restoration code generation
 - MSI installer with WiX
@@ -139,12 +167,14 @@ All packages now include both GUI and CLI versions:
 - Complete documentation in README.md
 
 ### Known Limitations
-- Only supports VICE 3.6-3.9 x64sc snapshots
+- Only supports VICE 3.6-3.10 x64sc snapshots
 - Requires memory initialization (`f 0000 ffff 00` + `reset`) before snapshot
 - Stack pointer placement may be risky in edge cases
 - "Smart attach..." feature in VICE should be avoided
 
-[Unreleased]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v1.9.0...v2.0.0
+[1.9.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v1.0.0...v1.9.0
 [1.0.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v0.9.1...v1.0.0
 [0.9.1]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/releases/tag/v0.9.0

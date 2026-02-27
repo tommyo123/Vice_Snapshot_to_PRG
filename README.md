@@ -1,12 +1,12 @@
-# VICE Snapshot → PRG / EasyFlash CRT Converter
+# VICE Snapshot → PRG / CRT Converter
 
-Converts VICE x64sc (C64SC) snapshots into self-restoring PRG files or EasyFlash CRT cartridges that boot directly on a real Commodore 64.
+Converts VICE x64sc (C64SC) snapshots into self-restoring PRG files, EasyFlash CRT or Magic Desk CRT cartridges that boot directly on a real Commodore 64.
 
 The converter reconstructs the full machine state: CPU registers, RAM, Color RAM, VIC-II, SID, CIA1/CIA2, stack pointer, zero-page, vectors, I/O mode – everything needed to return to the exact snapshot moment.
 
 ## Status & License
 
-- **Version:** 1.9.0-Beta
+- **Version:** 2.0.0
 - **License:** MIT
 
 ## What it does
@@ -15,11 +15,12 @@ The converter reconstructs the full machine state: CPU registers, RAM, Color RAM
 - Restores the machine state faithfully on real hardware.
 - Produces:
   - Self-extracting **PRG**, or
-  - **EasyFlash CRT** with optional LOAD-intercept for embedded PRG files.
+  - **EasyFlash CRT** with optional LOAD-intercept for embedded PRG files, or
+  - **Magic Desk CRT** (8K cart mode, ROML only).
 
 Snapshot parsing is intentionally strict: anything other than format 2.0 / C64SC is rejected to avoid undefined results.
 
-Tested with VICE 3.6–3.9.
+Tested with VICE 3.6–3.10.
 
 ## Downloads
 
@@ -81,6 +82,7 @@ If conversion fails due to insufficient free memory, the GUI offers to add RAM b
 ### EasyFlash CRT
 
 - Boots directly from cartridge.
+- Ultimax mode: ROML + ROMH.
 - Restore code and compressed data live in ROM.
 - Can embed PRG files and intercept `LOAD "NAME",8,1`.
 - Automatically picks trampoline address (`$0100` or `$0334`) based on stack position.
@@ -88,6 +90,18 @@ If conversion fails due to insufficient free memory, the GUI offers to add RAM b
 **ROM layout:**
 - **ROML** (`$8000–$9FFF`): Restore code, decompressor, compressed blocks
 - **ROMH** (`$A000–$BFFF`): Startup vectors, LOAD/SAVE hook, file metadata
+
+### Magic Desk CRT
+
+- Boots directly from cartridge via CBM80 signature.
+- 8K cart mode: ROML only (`$8000–$9FFF`), no ROMH.
+- Permanent kill via `$DE00` bit 7 (cartridge cannot be re-enabled).
+- Minimum 8 banks, maximum 64 banks (512 KB).
+- **No LOAD/SAVE hooking** – use EasyFlash format for that.
+
+**ROM layout:**
+- **Bank 0 ROML**: Boot code (CBM80) + payload start
+- **Banks 0–N ROML**: Restore code + relocated decompressor + compressed RAM
 
 ## Usage
 
@@ -97,27 +111,30 @@ If conversion fails due to insufficient free memory, the GUI offers to add RAM b
 # PRG
 vice-snapshot-to-prg-converter-cli input.vsf output.prg
 
-# CRT
+# EasyFlash CRT
 vice-snapshot-to-prg-converter-cli input.vsf output.crt
 
-# CRT with custom name and embedded PRGs
+# EasyFlash CRT with custom name and embedded PRGs
 vice-snapshot-to-prg-converter-cli --crt --name "My Game" --include-dir ./prg input.vsf output.crt
 
-# CRT with custom hook address
+# EasyFlash CRT with custom hook address
 vice-snapshot-to-prg-converter-cli --crt --include-dir ./prg --hook-addr $0334 input.vsf output.crt
+
+# Magic Desk CRT
+vice-snapshot-to-prg-converter-cli --magic-desk --name "My Game" input.vsf output.crt
 ```
 
 **Options:**
-- `--prg` / `--crt` – Force format (optional, auto-detected from extension)
+- `--prg` / `--crt` / `--magic-desk` – Force format (optional, auto-detected from extension for PRG/CRT)
 - `--name <name>` – Cartridge name (max 32 chars, CRT only)
-- `--include-dir <dir>` – Embed PRG files from directory (CRT only)
-- `--hook-addr <hex>` – Override LOAD/SAVE hook address (CRT only, requires `--include-dir`)
+- `--include-dir <dir>` – Embed PRG files from directory (EasyFlash only)
+- `--hook-addr <hex>` – Override LOAD/SAVE hook address (EasyFlash only, requires `--include-dir`)
 
 Output files are overwritten without prompting.
 
 ### GUI
 
-The GUI provides the same functionality with file browsers and a CRT options tab. If conversion fails, a dialog offers to add manual RAM blocks.
+The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type (EasyFlash or Magic Desk) from the dropdown. LOAD/SAVE hooking options are automatically disabled for Magic Desk. If conversion fails, a dialog offers to add manual RAM blocks.
 
 ### Recommended workflow
 

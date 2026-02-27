@@ -12,11 +12,13 @@ use std::process;
 use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
+use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
 
 #[derive(Debug, PartialEq)]
 enum OutputFormat {
     Prg,
     Crt,
+    MagicDeskCrt,
 }
 
 struct CliArgs {
@@ -65,7 +67,7 @@ fn main() {
             eprintln!("Warning: Output file does not have .prg extension");
             eprintln!();
         }
-        OutputFormat::Crt if !output_lower.ends_with(".crt") => {
+        OutputFormat::Crt | OutputFormat::MagicDeskCrt if !output_lower.ends_with(".crt") => {
             eprintln!("Warning: Output file does not have .crt extension");
             eprintln!();
         }
@@ -75,11 +77,23 @@ fn main() {
     // Warn if CRT-only options used with PRG
     if cli_args.format == OutputFormat::Prg {
         if cli_args.include_dir.is_some() {
-            eprintln!("Warning: --include-dir is only used with CRT format, ignoring");
+            eprintln!("Warning: --include-dir is only used with EasyFlash CRT format, ignoring");
             eprintln!();
         }
         if cli_args.hook_addr.is_some() {
-            eprintln!("Warning: --hook-addr is only used with CRT format, ignoring");
+            eprintln!("Warning: --hook-addr is only used with EasyFlash CRT format, ignoring");
+            eprintln!();
+        }
+    }
+
+    // Warn if LOAD/SAVE options used with Magic Desk
+    if cli_args.format == OutputFormat::MagicDeskCrt {
+        if cli_args.include_dir.is_some() {
+            eprintln!("Warning: --include-dir is not supported with Magic Desk format, ignoring");
+            eprintln!();
+        }
+        if cli_args.hook_addr.is_some() {
+            eprintln!("Warning: --hook-addr is not supported with Magic Desk format, ignoring");
             eprintln!();
         }
     }
@@ -114,7 +128,8 @@ fn main() {
 
     let format_str = match cli_args.format {
         OutputFormat::Prg => "PRG",
-        OutputFormat::Crt => "CRT",
+        OutputFormat::Crt => "EasyFlash CRT",
+        OutputFormat::MagicDeskCrt => "Magic Desk CRT",
     };
 
     println!("VICE Snapshot to PRG/CRT Converter v{} (CLI)", VERSION);
@@ -136,6 +151,7 @@ fn main() {
     let result = match cli_args.format {
         OutputFormat::Prg => convert_prg(&cli_args),
         OutputFormat::Crt => convert_crt(&cli_args),
+        OutputFormat::MagicDeskCrt => convert_magic_desk_crt(&cli_args),
     };
 
     match result {
@@ -170,15 +186,21 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         match arg.as_str() {
             "--prg" => {
                 if format.is_some() {
-                    return Err("Cannot specify both --prg and --crt".to_string());
+                    return Err("Cannot specify multiple format flags".to_string());
                 }
                 format = Some(OutputFormat::Prg);
             }
             "--crt" => {
                 if format.is_some() {
-                    return Err("Cannot specify both --prg and --crt".to_string());
+                    return Err("Cannot specify multiple format flags".to_string());
                 }
                 format = Some(OutputFormat::Crt);
+            }
+            "--magic-desk" => {
+                if format.is_some() {
+                    return Err("Cannot specify multiple format flags".to_string());
+                }
+                format = Some(OutputFormat::MagicDeskCrt);
             }
             "--name" => {
                 i += 1;
@@ -280,6 +302,22 @@ fn convert_crt(cli_args: &CliArgs) -> Result<(), String> {
     result
 }
 
+fn convert_magic_desk_crt(cli_args: &CliArgs) -> Result<(), String> {
+    let mut config = CrtConfig::auto()
+        .map_err(|e| format!("Failed to initialize: {}", e))?;
+
+    if let Some(ref name) = cli_args.cartridge_name {
+        config = config.with_cartridge_name(name);
+    }
+
+    let work_path = config.base_config.work_path.clone();
+    let converter = ConvertSnapshotMagicDeskCRT::new(config);
+    let result = converter.convert(&cli_args.input_path, &cli_args.output_path);
+
+    let _ = cleanup_work_dir(&work_path);
+    result
+}
+
 fn cleanup_work_dir(work_path: &Path) -> Result<(), String> {
     if work_path.exists() {
         std::fs::remove_dir_all(work_path)
@@ -300,11 +338,12 @@ fn print_usage(program_name: &str) {
     println!("  {} [OPTIONS] <input.vsf> <output>", name);
     println!();
     println!("DESCRIPTION:");
-    println!("  Converts VICE 3.6-3.9 x64sc snapshot files (.vsf) to:");
+    println!("  Converts VICE 3.6-3.10 x64sc snapshot files (.vsf) to:");
     println!("  - PRG: Self-restoring C64 PRG files");
-    println!("  - CRT: EasyFlash cartridge files");
+    println!("  - CRT: EasyFlash cartridge files (with optional LOAD/SAVE hooking)");
+    println!("  - CRT: Magic Desk cartridge files (8K cart mode, ROML only)");
     println!();
-    println!("  Output format is auto-detected from file extension, or use --prg/--crt.");
+    println!("  Output format is auto-detected from file extension, or use --prg/--crt/--magic-desk.");
     println!("  Existing output files are overwritten without prompting.");
     println!();
     println!("ARGUMENTS:");
@@ -314,9 +353,10 @@ fn print_usage(program_name: &str) {
     println!("OPTIONS:");
     println!("  --prg                Force PRG format output");
     println!("  --crt                Force EasyFlash CRT format output");
+    println!("  --magic-desk         Force Magic Desk CRT format output");
     println!("  --name <name>        Cartridge name (CRT only, max 32 chars)");
-    println!("  --include-dir <dir>  Include PRG files from directory (CRT only)");
-    println!("  --hook-addr <hex>    LOAD/SAVE hook address (CRT only, overrides auto)");
+    println!("  --include-dir <dir>  Include PRG files from directory (EasyFlash only)");
+    println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash only, overrides auto)");
     println!("  -h, --help           Show this help message");
     println!();
     println!("EXAMPLES:");
@@ -325,9 +365,10 @@ fn print_usage(program_name: &str) {
     println!("  {} --crt --name \"My Game\" snapshot.vsf game.crt", name);
     println!("  {} --crt --include-dir ./files snapshot.vsf game.crt", name);
     println!("  {} --crt --include-dir ./files --hook-addr $0334 snapshot.vsf game.crt", name);
+    println!("  {} --magic-desk --name \"My Game\" snapshot.vsf game.crt", name);
     println!();
     println!("IMPORTANT:");
-    println!("  - Only works with VICE 3.6-3.9 x64sc snapshots");
+    println!("  - Only works with VICE 3.6-3.10 x64sc snapshots");
     println!("  - Memory MUST be initialized before snapshot (f 0000 ffff 00)");
     println!();
     println!("For more information:");

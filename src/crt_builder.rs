@@ -1,6 +1,6 @@
 //! CRT cartridge file builder
 //!
-//! Creates C64 cartridge files (.crt) with multiple banks for EasyFlash format.
+//! Creates C64 cartridge files (.crt) with multiple banks for EasyFlash and Magic Desk formats.
 //!
 // Copyright (c) 2025 Tommy Olsen
 // Licensed under the MIT License.
@@ -9,29 +9,42 @@ use std::fs::File;
 use std::io::Write;
 
 /// Supported cartridge types
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CartridgeType {
     /// EasyFlash cartridge (hardware type 32)
     /// Ultimax mode: ROML @ $8000-$9FFF, ROMH @ $E000-$FFFF
     EasyFlash,
+    /// Magic Desk cartridge (hardware type 19)
+    /// 8K cart mode: ROML only @ $8000-$9FFF, no ROMH
+    MagicDesk,
 }
 
 impl CartridgeType {
     pub fn hardware_type(&self) -> u16 {
         match self {
             CartridgeType::EasyFlash => 32,
+            CartridgeType::MagicDesk => 19,
         }
     }
 
     pub fn exrom(&self) -> u8 {
         match self {
             CartridgeType::EasyFlash => 1,
+            CartridgeType::MagicDesk => 0,
         }
     }
 
     pub fn game(&self) -> u8 {
         match self {
             CartridgeType::EasyFlash => 0,
+            CartridgeType::MagicDesk => 1,
+        }
+    }
+
+    pub fn chip_type(&self) -> u16 {
+        match self {
+            CartridgeType::EasyFlash => 2, // Flash ROM
+            CartridgeType::MagicDesk => 0, // ROM
         }
     }
 }
@@ -224,8 +237,8 @@ impl CRTBuilder {
         // Packet length (4 bytes) - big endian
         packet[4..8].copy_from_slice(&(packet_size as u32).to_be_bytes());
 
-        // Chip type: 2 = Flash ROM (EasyFlash uses type 2 for both ROML and ROMH)
-        packet[8..10].copy_from_slice(&2u16.to_be_bytes());
+        // Chip type: EasyFlash=2 (Flash ROM), MagicDesk=0 (ROM)
+        packet[8..10].copy_from_slice(&self.cartridge_type.chip_type().to_be_bytes());
 
         // Bank number (2 bytes) - big endian
         packet[10..12].copy_from_slice(&(bank_number as u16).to_be_bytes());

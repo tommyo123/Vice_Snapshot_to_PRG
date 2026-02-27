@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const VERSION: &str = "1.9-Beta";
+pub const VERSION: &str = "2.0";
 
 #[derive(Clone)]
 pub struct Config {
@@ -58,7 +58,7 @@ impl Default for Config {
     }
 }
 
-/// Configuration for CRT (EasyFlash cartridge) conversion
+/// Configuration for CRT (EasyFlash / Magic Desk cartridge) conversion
 #[derive(Clone)]
 pub struct CrtConfig {
     /// Base configuration (work directory)

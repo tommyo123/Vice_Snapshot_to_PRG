@@ -1,4 +1,4 @@
-//! Converts VICE 3.6-3.9 x64sc snapshot images (VSF) to C64 PRG files or EasyFlash CRT cartridges.
+//! Converts VICE 3.6-3.10 x64sc snapshot images (VSF) to C64 PRG files, EasyFlash CRT or Magic Desk CRT cartridges.
 //!
 // Copyright (c) 2025 Tommy Olsen
 // Licensed under the MIT License.
@@ -22,6 +22,7 @@ use std::path::Path;
 use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
+use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
 
 const WINDOW_WIDTH: i32 = 720;
 const WINDOW_HEIGHT: i32 = 720;
@@ -59,7 +60,7 @@ fn main() {
 
     let mut window = Window::default()
         .with_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-        .with_label(&format!("VICE 3.6-3.9 x64sc Snapshot to PRG/CRT Converter v{}", VERSION));
+        .with_label(&format!("VICE 3.6-3.10 x64sc Snapshot to PRG/CRT Converter v{}", VERSION));
     window.make_resizable(false);
 
     if let Ok(icon) = SvgImage::from_data(icon_svg) {
@@ -125,7 +126,7 @@ fn main() {
     let crt_tab = group::Group::default()
         .with_pos(MARGIN, y_pos + 25)
         .with_size(WINDOW_WIDTH - 2 * MARGIN, TAB_HEIGHT - 30)
-        .with_label("CRT Output (EasyFlash)");
+        .with_label("CRT Output");
 
     let mut crt_y = y_pos + 45;
 
@@ -152,7 +153,7 @@ fn main() {
     let mut crt_output_label = Frame::default()
         .with_pos(MARGIN, crt_y)
         .with_size(WINDOW_WIDTH - 2 * MARGIN, 25)
-        .with_label("Select output EasyFlash CRT file:");
+        .with_label("Select output CRT file:");
     crt_output_label.set_label_size(13);
     crt_output_label.set_align(enums::Align::Left | enums::Align::Inside);
 
@@ -168,6 +169,22 @@ fn main() {
         .with_label("Browse...");
 
     crt_y += FIELD_HEIGHT + 20;
+
+    // Cartridge type selection
+    let mut crt_type_label = Frame::default()
+        .with_pos(MARGIN, crt_y)
+        .with_size(120, 25)
+        .with_label("Cartridge type:");
+    crt_type_label.set_label_size(13);
+    crt_type_label.set_align(enums::Align::Left | enums::Align::Inside);
+
+    let mut crt_type_choice = menu::Choice::default()
+        .with_pos(MARGIN + 125, crt_y)
+        .with_size(160, 25);
+    crt_type_choice.add_choice("EasyFlash|Magic Desk");
+    crt_type_choice.set_value(0); // Default: EasyFlash
+
+    crt_y += 35;
 
     // Cartridge name
     let mut crt_name_label = Frame::default()
@@ -298,6 +315,7 @@ fn main() {
     let crt_input_field_rc = Rc::new(RefCell::new(crt_input_field.clone()));
     let crt_output_field_rc = Rc::new(RefCell::new(crt_output_field.clone()));
     let crt_name_field_rc = Rc::new(RefCell::new(crt_name_field.clone()));
+    let crt_type_choice_rc = Rc::new(RefCell::new(crt_type_choice.clone()));
     let crt_hook_check_rc = Rc::new(RefCell::new(crt_hook_check.clone()));
     let crt_auto_location_check_rc = Rc::new(RefCell::new(crt_auto_location_check.clone()));
     let crt_addr_field_rc = Rc::new(RefCell::new(crt_addr_field.clone()));
@@ -309,6 +327,31 @@ fn main() {
     // Extra RAM blocks for allocation failures (shared between PRG and CRT)
     // Each block is (address, count) - cleared on snapshot change or tab switch
     let extra_ram_blocks_rc: Rc<RefCell<Vec<(u16, u16)>>> = Rc::new(RefCell::new(Vec::new()));
+
+    // CRT cartridge type callback - disable LOAD/SAVE for Magic Desk
+    {
+        let hook_check = crt_hook_check_rc.clone();
+        let auto_location_check = crt_auto_location_check_rc.clone();
+        let addr_field = crt_addr_field_rc.clone();
+        let include_field = crt_include_field_rc.clone();
+        let include_btn = crt_include_btn_rc.clone();
+
+        crt_type_choice.clone().set_callback(move |choice| {
+            let is_magic_desk = choice.value() == 1;
+            if is_magic_desk {
+                // Magic Desk: force-uncheck and disable LOAD/SAVE hooking
+                hook_check.borrow_mut().set_checked(false);
+                hook_check.borrow_mut().deactivate();
+                auto_location_check.borrow_mut().deactivate();
+                addr_field.borrow_mut().deactivate();
+                include_field.borrow_mut().deactivate();
+                include_btn.borrow_mut().deactivate();
+            } else {
+                // EasyFlash: re-enable hook checkbox
+                hook_check.borrow_mut().activate();
+            }
+        });
+    }
 
     // CRT hook checkbox callback - enable/disable related fields
     {
@@ -413,13 +456,9 @@ fn main() {
                 // Clear extra RAM blocks when snapshot changes
                 extra_blocks.borrow_mut().clear();
 
-                let output_val = output_field.borrow().value();
-                if output_val.is_empty() || output_val == "output.prg" {
-                    if let Some(parent) = filename.parent() {
-                        let suggested_output = parent.join("output.prg");
-                        output_field.borrow_mut().set_value(&suggested_output.to_string_lossy());
-                    }
-                }
+                // Default output = same name as input but with .prg extension
+                let suggested_output = filename.with_extension("prg");
+                output_field.borrow_mut().set_value(&suggested_output.to_string_lossy());
             }
         });
     }
@@ -437,9 +476,13 @@ fn main() {
 
             let input_path = input_field.borrow().value();
             if !input_path.is_empty() {
-                if let Some(parent) = Path::new(&input_path).parent() {
+                let input = Path::new(&input_path);
+                if let Some(parent) = input.parent() {
                     let _ = chooser.set_directory(&parent.to_path_buf());
-                    chooser.set_preset_file("output.prg");
+                }
+                let preset = input.with_extension("prg");
+                if let Some(name) = preset.file_name() {
+                    chooser.set_preset_file(&name.to_string_lossy());
                 }
             }
 
@@ -480,13 +523,9 @@ fn main() {
                 // Clear extra RAM blocks when snapshot changes
                 extra_blocks.borrow_mut().clear();
 
-                let output_val = output_field.borrow().value();
-                if output_val.is_empty() || output_val == "output.crt" {
-                    if let Some(parent) = filename.parent() {
-                        let suggested_output = parent.join("output.crt");
-                        output_field.borrow_mut().set_value(&suggested_output.to_string_lossy());
-                    }
-                }
+                // Default output = same name as input but with .crt extension
+                let suggested_output = filename.with_extension("crt");
+                output_field.borrow_mut().set_value(&suggested_output.to_string_lossy());
             }
         });
     }
@@ -504,9 +543,13 @@ fn main() {
 
             let input_path = input_field.borrow().value();
             if !input_path.is_empty() {
-                if let Some(parent) = Path::new(&input_path).parent() {
+                let input = Path::new(&input_path);
+                if let Some(parent) = input.parent() {
                     let _ = chooser.set_directory(&parent.to_path_buf());
-                    chooser.set_preset_file("output.crt");
+                }
+                let preset = input.with_extension("crt");
+                if let Some(name) = preset.file_name() {
+                    chooser.set_preset_file(&name.to_string_lossy());
                 }
             }
 
@@ -547,6 +590,7 @@ fn main() {
         let crt_input = crt_input_field_rc.clone();
         let crt_output = crt_output_field_rc.clone();
         let crt_name = crt_name_field_rc.clone();
+        let crt_type = crt_type_choice_rc.clone();
         let crt_hook = crt_hook_check_rc.clone();
         let crt_auto_location = crt_auto_location_check_rc.clone();
         let crt_addr = crt_addr_field_rc.clone();
@@ -567,10 +611,12 @@ fn main() {
                 let input_path = crt_input.borrow().value();
                 let output_path = crt_output.borrow().value();
                 let cart_name = crt_name.borrow().value();
-                let hook_enabled = crt_hook.borrow().is_checked();
+                let is_magic_desk = crt_type.borrow().value() == 1;
+                let hook_enabled = crt_hook.borrow().is_checked() && !is_magic_desk;
                 let auto_location = crt_auto_location.borrow().is_checked();
                 let addr_text = crt_addr.borrow().value();
                 let include_dir = crt_include.borrow().value();
+                let cart_type_name = if is_magic_desk { "Magic Desk" } else { "EasyFlash" };
 
                 if input_path.is_empty() {
                     status_buffer.borrow_mut().set_text("Error: Please select an input VSF file");
@@ -588,13 +634,13 @@ fn main() {
                     return;
                 }
 
-                // Validate include directory when hook is enabled
-                if hook_enabled && include_dir.is_empty() {
+                // Validate include directory when hook is enabled (EasyFlash only)
+                if hook_enabled && !is_magic_desk && include_dir.is_empty() {
                     status_buffer.borrow_mut().set_text("Error: Include directory is required when LOAD/SAVE hooking is enabled.\n\nPlease select a directory containing PRG files to embed.");
                     return;
                 }
 
-                if hook_enabled && !include_dir.is_empty() && !Path::new(&include_dir).is_dir() {
+                if hook_enabled && !is_magic_desk && !include_dir.is_empty() && !Path::new(&include_dir).is_dir() {
                     let msg = format!("Error: Include directory not found:\n{}", include_dir);
                     status_buffer.borrow_mut().set_text(&msg);
                     return;
@@ -629,11 +675,13 @@ fn main() {
 
                     if blocks_count > 0 {
                         status_buffer.borrow_mut().set_text(&format!(
-                            "Converting snapshot to EasyFlash CRT...\nUsing {} extra RAM block(s)\n",
-                            blocks_count
+                            "Converting snapshot to {} CRT...\nUsing {} extra RAM block(s)\n",
+                            cart_type_name, blocks_count
                         ));
                     } else {
-                        status_buffer.borrow_mut().set_text("Converting snapshot to EasyFlash CRT...\n");
+                        status_buffer.borrow_mut().set_text(&format!(
+                            "Converting snapshot to {} CRT...\n", cart_type_name
+                        ));
                     }
                     app::awake();
 
@@ -641,7 +689,7 @@ fn main() {
                         if !cart_name.is_empty() {
                             config.cartridge_name = Some(cart_name.clone());
                         }
-                        if hook_enabled && !include_dir.is_empty() {
+                        if hook_enabled && !is_magic_desk && !include_dir.is_empty() {
                             config.include_dir = Some(include_dir.clone());
                             config.patch_load_save = true;
                             config.auto_location = auto_location;
@@ -661,8 +709,13 @@ fn main() {
                         }
 
                         let work_path = config.base_config.work_path.clone();
-                        let converter = ConvertSnapshotCRT::with_extra_blocks(config, current_blocks);
-                        let conversion_result = converter.convert(&input_path, &output_path);
+                        let conversion_result = if is_magic_desk {
+                            let converter = ConvertSnapshotMagicDeskCRT::with_extra_blocks(config, current_blocks);
+                            converter.convert(&input_path, &output_path)
+                        } else {
+                            let converter = ConvertSnapshotCRT::with_extra_blocks(config, current_blocks);
+                            converter.convert(&input_path, &output_path)
+                        };
 
                         let _ = cleanup_work_dir(&work_path);
                         conversion_result
@@ -673,8 +726,8 @@ fn main() {
                             // Success - clear extra blocks
                             extra_blocks.borrow_mut().clear();
                             let success_msg = format!(
-                                "Success!\n\nSnapshot successfully converted to EasyFlash CRT:\n{}",
-                                output_path
+                                "Success!\n\nSnapshot successfully converted to {} CRT:\n{}",
+                                cart_type_name, output_path
                             );
                             status_buffer.borrow_mut().set_text(&success_msg);
                             break;
@@ -1027,7 +1080,7 @@ fn show_help_window() {
     );
 
     let help_text = format!(
-        r#"VICE 3.6-3.9 x64sc Snapshot to PRG/CRT Converter v{}
+        r#"VICE 3.6-3.10 x64sc Snapshot to PRG/CRT Converter v{}
 
 Copyright (c) 2025 Tommy Olsen
 Licensed under the MIT License.
@@ -1036,9 +1089,10 @@ Licensed under the MIT License.
 
 OVERVIEW
 
-Converts VICE 3.6-3.9 x64sc emulator snapshots (.vsf files) into:
+Converts VICE 3.6-3.10 x64sc emulator snapshots (.vsf files) into:
 - Self-restoring PRG files (run on real C64 hardware)
 - EasyFlash CRT cartridges (boot directly from cartridge)
+- Magic Desk CRT cartridges (8K cart mode, ROML only)
 
 ===============================================================
 
@@ -1050,15 +1104,19 @@ Creates a standard C64 PRG file that can be loaded and run:
 
 ===============================================================
 
-CRT OUTPUT (EasyFlash)
+CRT OUTPUT
 
-Creates an EasyFlash cartridge image that boots directly.
-Features:
-- Instant boot from cartridge
+EasyFlash:
+- Ultimax mode: ROML + ROMH
 - Optional LOAD/SAVE hooking for embedded PRG files
 - Files placed in "Include directory" can be LOADed from BASIC
 
-LOAD/SAVE Hooking:
+Magic Desk:
+- 8K cart mode: ROML only ($8000-$9FFF)
+- CBM80 boot, permanent kill via $DE00 bit 7
+- No LOAD/SAVE hooking (use EasyFlash for that)
+
+LOAD/SAVE Hooking (EasyFlash only):
 When enabled, you can embed PRG files that can be loaded:
   LOAD "FILENAME",8,1
 
@@ -1069,7 +1127,7 @@ files from ROM banks instead of disk.
 
 QUICK START
 
-1. In VICE 3.6-3.9 x64sc monitor (Alt+H), run:
+1. In VICE 3.6-3.10 x64sc monitor (Alt+H), run:
    f 0000 ffff 00
    reset
    x (exit monitor)
@@ -1100,7 +1158,7 @@ be zeroed and made available for allocation.
 
 IMPORTANT LIMITATIONS
 
-- Only works with VICE 3.6-3.9 x64sc snapshots
+- Only works with VICE 3.6-3.10 x64sc snapshots
 - Memory MUST be initialized before snapshot (f 0000 ffff 00)
 - Do NOT use "Smart attach..." feature in VICE
 "#, VERSION);
