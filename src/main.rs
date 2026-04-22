@@ -1,4 +1,4 @@
-//! Converts VICE 3.6-3.10 x64sc snapshot images (VSF) to C64 PRG files, EasyFlash CRT or Magic Desk CRT cartridges.
+//! Converts VICE snapshot images (VSF) to C64 PRG files, EasyFlash CRT or Magic Desk CRT cartridges.
 //!
 // Copyright (c) 2025 Tommy Olsen
 // Licensed under the MIT License.
@@ -60,7 +60,7 @@ fn main() {
 
     let mut window = Window::default()
         .with_size(WINDOW_WIDTH, WINDOW_HEIGHT)
-        .with_label(&format!("VICE 3.6-3.10 x64sc Snapshot to PRG/CRT Converter v{}", VERSION));
+        .with_label(&format!("VICE Snapshot to PRG/CRT Converter v{}", VERSION));
     window.make_resizable(false);
 
     if let Ok(icon) = SvgImage::from_data(icon_svg) {
@@ -1080,7 +1080,7 @@ fn show_help_window() {
     );
 
     let help_text = format!(
-        r#"VICE 3.6-3.10 x64sc Snapshot to PRG/CRT Converter v{}
+        r#"VICE Snapshot to PRG/CRT Converter v{}
 
 Copyright (c) 2025 Tommy Olsen
 Licensed under the MIT License.
@@ -1089,7 +1089,7 @@ Licensed under the MIT License.
 
 OVERVIEW
 
-Converts VICE 3.6-3.10 x64sc emulator snapshots (.vsf files) into:
+Converts VICE emulator snapshots (.vsf files) into:
 - Self-restoring PRG files (run on real C64 hardware)
 - EasyFlash CRT cartridges (boot directly from cartridge)
 - Magic Desk CRT cartridges (8K cart mode, ROML only)
@@ -1127,7 +1127,7 @@ files from ROM banks instead of disk.
 
 QUICK START
 
-1. In VICE 3.6-3.10 x64sc monitor (Alt+H), run:
+1. In the VICE monitor (Alt+H), run:
    f 0000 ffff 00
    reset
    x (exit monitor)
@@ -1158,7 +1158,6 @@ be zeroed and made available for allocation.
 
 IMPORTANT LIMITATIONS
 
-- Only works with VICE 3.6-3.10 x64sc snapshots
 - Memory MUST be initialized before snapshot (f 0000 ffff 00)
 - Do NOT use "Smart attach..." feature in VICE
 "#, VERSION);

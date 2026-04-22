@@ -1,7 +1,7 @@
 //! VICE Snapshot to PRG/CRT Converter Library
 //!
-//! This library provides the core functionality for converting VICE 3.6-3.10 x64sc
-//! snapshot files to self-restoring C64 PRG files, EasyFlash CRT or Magic Desk CRT cartridges.
+//! This library provides the core functionality for converting VICE snapshot
+//! files to self-restoring C64 PRG files, EasyFlash CRT or Magic Desk CRT cartridges.
 //!
 // Copyright (c) 2025 Tommy Olsen
 // Licensed under the MIT License.

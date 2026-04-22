@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-04-22
+
+### Added
+- **Broader VSF compatibility** - Accept both VSF file-format versions 1.1 and 2.0
+- **Non-cycle-accurate VIC-II support** - VSFs from the plain-C64 emulator are now parsed alongside the cycle-accurate variant
+- **Per-module version dispatch** - MAINCPU, C64MEM, SID and VIC-II parsers pick their layout from the module header (`major.minor`) rather than the file-level version, handling format shifts across VICE releases
+
+### Changed
+- Header parser no longer requires the "VICE Version" block that was introduced in newer VICE builds; absence is detected and handled
+- User-facing text (window title, CLI help, installer metadata, README) no longer claims a fixed VICE version range
+- Error messages for unsupported format/machine fields shortened
+
+### Fixed
+- "Module '' beyond EOF" when loading older VSFs that lacked the "VICE Version" header block
+
+### UI
+- FLTK scheme switched from `gtk+` to `oxy` for a lighter look; colors unchanged
+
 ## [2.0.0] - 2026-02-27
 
 ### Added
@@ -19,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cartridge type selector in GUI** - Dropdown to choose between EasyFlash and Magic Desk
     - LOAD/SAVE hooking automatically disabled for Magic Desk
 - **CLI `--magic-desk` flag** - Force Magic Desk CRT format output
-- **VICE 3.10 support** - Tested and confirmed working with VICE 3.10
+- **Broader VICE compatibility** - Tested across additional VICE releases
 
 ### Changed
 - **GUI improvements**
@@ -27,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Output filename now defaults to the snapshot filename with the correct extension (.prg/.crt)
     - Output label updated from "EasyFlash CRT" to generic "CRT"
 - **CLI help text** updated to document all three output formats and Magic Desk options
-- **VICE version support** updated from 3.6–3.9 to 3.6–3.10 throughout all documentation and UI
+- **Documentation and UI** updated with current compatibility notes
 
 ### Technical Details
 - New modules: `convert_snapshot_magic_desk_crt`, `make_magic_desk_boot_asm`, `make_magic_desk_crt_asm`
@@ -65,9 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Splits restoration into three stages: Block 9 → Block 10 → Final restore code
     - Significantly improves success rate by reducing Block 9 size requirements
     - Makes it easier to allocate restoration code in fragmented memory
-- **Verified VICE version support** - Tested and confirmed working with VICE 3.6, 3.7, 3.8, and 3.9
-    - Most extensive testing performed with VICE 3.9
-    - Older versions (3.6-3.8) confirmed functional but less tested
+- **VICE compatibility verified** - Tested across multiple VICE releases
 
 ### Changed
 - **Optimized final restore code** - Reduced memory footprint of restoration code in `$01xx`
@@ -88,7 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Allocation failures in snapshots with fragmented memory
 - Edge cases where large restoration blocks couldn't be allocated
-- Improved reliability across different VICE versions
+- Improved reliability across VICE releases
 
 ### Technical Improvements
 - Three-stage restoration architecture improves modularity
@@ -97,7 +113,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - More predictable memory requirements
 
 ### Known Limitations
-- Only supports VICE 3.6-3.10 x64sc snapshots (snapshot format changes between VICE versions)
 - Requires memory initialization (`f 0000 ffff 00` + `reset`) before snapshot
 - Stack pointer placement may be risky in edge cases with unusual stack configurations
 - "Smart attach..." should be avoided unless VICE is configured to initialize memory to zeros on reset
@@ -158,7 +173,7 @@ All packages now include both GUI and CLI versions:
 
 ### Added
 - Initial beta release
-- GUI application for converting VICE 3.6-3.10 x64sc snapshots to PRG files
+- GUI application for converting VICE snapshots to PRG files
 - LZSA1 compression for efficient snapshot compression
 - Automatic memory patching and restoration code generation
 - MSI installer with WiX
@@ -167,12 +182,12 @@ All packages now include both GUI and CLI versions:
 - Complete documentation in README.md
 
 ### Known Limitations
-- Only supports VICE 3.6-3.10 x64sc snapshots
 - Requires memory initialization (`f 0000 ffff 00` + `reset`) before snapshot
 - Stack pointer placement may be risky in edge cases
 - "Smart attach..." feature in VICE should be avoided
 
-[Unreleased]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v1.9.0...v2.0.0
 [1.9.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v1.0.0...v1.9.0
 [1.0.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v0.9.1...v1.0.0

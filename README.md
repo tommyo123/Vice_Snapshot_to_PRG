@@ -1,26 +1,24 @@
 # VICE Snapshot → PRG / CRT Converter
 
-Converts VICE x64sc (C64SC) snapshots into self-restoring PRG files, EasyFlash CRT or Magic Desk CRT cartridges that boot directly on a real Commodore 64.
+Converts VICE snapshots into self-restoring PRG files, EasyFlash CRT or Magic Desk CRT cartridges that boot directly on a real Commodore 64.
 
 The converter reconstructs the full machine state: CPU registers, RAM, Color RAM, VIC-II, SID, CIA1/CIA2, stack pointer, zero-page, vectors, I/O mode – everything needed to return to the exact snapshot moment.
 
 ## Status & License
 
-- **Version:** 2.0.0
+- **Version:** 2.1.0
 - **License:** MIT
 
 ## What it does
 
-- Reads VICE snapshot format 2.0 taken with x64sc (C64SC).
+- Reads VICE snapshot files (VSF).
 - Restores the machine state faithfully on real hardware.
 - Produces:
   - Self-extracting **PRG**, or
   - **EasyFlash CRT** with optional LOAD-intercept for embedded PRG files, or
   - **Magic Desk CRT** (8K cart mode, ROML only).
 
-Snapshot parsing is intentionally strict: anything other than format 2.0 / C64SC is rejected to avoid undefined results.
-
-Tested with VICE 3.6–3.10.
+Not every snapshot converts cleanly — some programs rely on hardware state that can't be faithfully reproduced from the file alone.
 
 ## Downloads
 
@@ -33,12 +31,6 @@ Available as:
 (Executables are unsigned; Windows will show a warning.)
 
 ## Requirements and limitations
-
-### Snapshot requirements
-
-- Must be from VICE **x64sc** (the C64SC model).
-- Must be snapshot **format 2.0**.
-- Other formats and models (x64, xscpu64, etc.) are intentionally unsupported.
 
 ### Clear RAM before taking the snapshot
 

@@ -338,7 +338,7 @@ fn print_usage(program_name: &str) {
     println!("  {} [OPTIONS] <input.vsf> <output>", name);
     println!();
     println!("DESCRIPTION:");
-    println!("  Converts VICE 3.6-3.10 x64sc snapshot files (.vsf) to:");
+    println!("  Converts VICE snapshot files (.vsf) to:");
     println!("  - PRG: Self-restoring C64 PRG files");
     println!("  - CRT: EasyFlash cartridge files (with optional LOAD/SAVE hooking)");
     println!("  - CRT: Magic Desk cartridge files (8K cart mode, ROML only)");
@@ -368,7 +368,6 @@ fn print_usage(program_name: &str) {
     println!("  {} --magic-desk --name \"My Game\" snapshot.vsf game.crt", name);
     println!();
     println!("IMPORTANT:");
-    println!("  - Only works with VICE 3.6-3.10 x64sc snapshots");
     println!("  - Memory MUST be initialized before snapshot (f 0000 ffff 00)");
     println!();
     println!("For more information:");

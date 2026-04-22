@@ -94,11 +94,12 @@ struct ModuleVersion {
     minor: u8,
 }
 
-/// Emulator variant. Only VIC-II differs between them (viciisc vs vicii).
+/// Emulator variant, selected by the machine name in the VSF header.
+/// Only the VIC-II module layout differs between the two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Machine {
-    C64,   // x64
-    C64Sc, // x64sc
+    C64,
+    C64Sc,
 }
 
 impl Machine {
@@ -111,29 +112,13 @@ impl Machine {
     }
 }
 
-/// Module version matrix for supported producers.
-///
-/// `x64sc` (viciisc VIC-II, color RAM @757 or @761):
-///
-/// | VICE | VSF | `MAINCPU` | `C64MEM` | `SID` simple | `VIC-II` |
-/// |------|-----|-----------|----------|--------------|----------|
-/// | 2.4  | 1.1 | 1.1 (32b) | 0.0      | 1.0          | 1.1 (cram@757) |
-/// | 3.0  | 1.1 | 1.1 (32b) | 0.1      | 1.3          | 1.1 (cram@757) |
-/// | 3.2  | 1.1 | 1.1 (32b) | 0.1      | 1.3          | 1.1 (cram@757) |
-/// | 3.4  | 1.1 | 1.1 (32b) | 0.1      | 1.4          | 1.1 (cram@757) |
-/// | 3.5  | 1.1 | 1.1 (32b) | 0.1      | 1.5          | 1.1 (cram@757) |
-/// | 3.10 | 2.0 | 1.3 (64b) | 0.1      | 1.5          | 1.3 (cram@761) |
-///
-/// `x64` (vicii VIC-II, color RAM @43, regs @1119 for all versions).
+/// Accept VSF file versions 1.1 and 2.0. Per-module layout dispatches further below.
 fn check_file_version(major: u8, minor: u8) -> Result<(), String> {
     match (major, minor) {
         (1, 1) | (2, 0) => Ok(()),
         _ => Err(format!(
-            "Unsupported snapshot format version {}.{}\n\n\
-             Supported snapshot formats: 1.1 (VICE 2.4-3.5) and 2.0 (VICE 3.6-3.10).\n\
-             Your snapshot is format {}.{}.\n\n\
-             Please create a new snapshot using VICE x64sc emulator.",
-            major, minor, major, minor
+            "Unsupported snapshot format version {}.{}",
+            major, minor
         )),
     }
 }
@@ -179,14 +164,10 @@ impl ParseVSF {
 
         let mach = trim_nul(&read_fixed(&mut cur, 16)?).to_string();
 
-        let machine = Machine::from_name(&mach).ok_or_else(|| format!(
-            "Unsupported machine type '{}'\n\n\
-             Supported: C64 (x64) and C64SC (x64sc).\n\
-             Your snapshot is from '{}'.",
-            mach, mach
-        ))?;
+        let machine = Machine::from_name(&mach)
+            .ok_or_else(|| format!("Unsupported machine type '{}'", mach))?;
 
-        // 3.0+ inserts a 21-byte "VICE Version" block here; 2.4 does not. Peek first.
+        // Newer snapshots insert a 21-byte "VICE Version" block here; older ones don't.
         let pos = cur.position() as usize;
         if self.raw.get(pos..pos + 12) == Some(b"VICE Version") {
             let _ = read_fixed(&mut cur, 21)?;
@@ -378,9 +359,7 @@ impl ParseVSF {
 /* ======================= Module parsers ======================= */
 
 fn parse_cpu(payload: &[u8], mver: ModuleVersion) -> Result<Cpu6510, String> {
-    // MAINCPU clock field width:
-    //   1.1 (VICE 2.4-3.5): 4 bytes (uint32_t CLOCK)
-    //   1.3 (VICE 3.6+):    8 bytes (uint64_t CLOCK)
+    // MAINCPU CLOCK field: 4 bytes up to module 1.1, 8 bytes from 1.3 onward.
     let clock_size: usize = if mver.minor >= 3 { 8 } else { 4 };
 
     let mut c = Cursor::new(payload);
@@ -398,9 +377,9 @@ fn parse_cpu(payload: &[u8], mver: ModuleVersion) -> Result<Cpu6510, String> {
 }
 
 fn parse_memory(payload: &[u8], _mver: ModuleVersion) -> Result<C64Mem, String> {
-    // C64MEM prefix is shared across 0.0 (VICE 2.4) and 0.1 (VICE 3.0+):
+    // C64MEM prefix (shared across 0.0 and 0.1):
     //   cpu_port_data(1), cpu_port_dir(1), exrom(1), game(1), ram(65536)
-    // Only the 0.1 tail (pport bit6/bit7 decay state) differs, which we skip.
+    // The 0.1 tail (pport bit6/bit7 decay) is skipped.
     if payload.len() < 4 + 65536 {
         return Err("C64MEM too short".to_string());
     }
@@ -421,26 +400,24 @@ fn parse_memory(payload: &[u8], _mver: ModuleVersion) -> Result<C64Mem, String> 
 
 fn parse_vic(payload: &[u8], _cfg: &ParserConfig, machine: Machine, mver: ModuleVersion) -> Result<VicII, String> {
     let (regs_off, color_off) = match machine {
-        // viciisc: model(1), regs(0x40), ..., cram(0x400).
-        // Color RAM offset depends on `light_pen.trigger_cycle` width:
-        //   1.1 => 757 (uint32_t), 1.3 => 761 (CLOCK/uint64_t).
+        // Cycle-accurate VIC-II: model(1), regs(0x40), ..., cram(0x400).
+        // cram offset depends on trigger_cycle width (32-bit vs CLOCK).
         Machine::C64Sc => (1usize, if mver.minor >= 3 { 761 } else { 757 }),
 
-        // vicii: 3 flags + cbuf(40), then cram, then ~52 bytes, then regs.
-        // Stable across 1.1-1.3.
+        // Non-cycle-accurate VIC-II: flags+cbuf first, then cram, then regs.
         Machine::C64 => (1119usize, 43usize),
     };
 
     if payload.len() < regs_off + 47 {
         return Err(format!(
-            "VIC-II {}.{} ({:?}) too small for registers ({} bytes)",
-            mver.major, mver.minor, machine, payload.len()
+            "VIC-II {}.{} too small for registers ({} bytes)",
+            mver.major, mver.minor, payload.len()
         ));
     }
     if payload.len() < color_off + 1024 {
         return Err(format!(
-            "VIC-II {}.{} ({:?}) too small for color RAM (need {}, got {})",
-            mver.major, mver.minor, machine, color_off + 1024, payload.len()
+            "VIC-II {}.{} too small for color RAM (need {}, got {})",
+            mver.major, mver.minor, color_off + 1024, payload.len()
         ));
     }
 
@@ -502,10 +479,10 @@ fn parse_cia(payload: &[u8]) -> Result<Cia6526, String> {
 
 fn parse_sid(payload: &[u8], _cfg: &ParserConfig, mver: ModuleVersion) -> Result<Sid6581, String> {
     // Primary SID module layout by minor version:
-    //   1.0 (VICE 2.4):   sound(1), engine(1), siddata(32)                  regs@2
-    //                     (or payload_len==1 for "sound off", or bare 32)
-    //   1.1-1.3:          sids(1), sound(1), engine(1), siddata(32)         regs@3
-    //   1.4+ (VICE 3.4+): sids(1), sound(1), engine(1), model(1), siddata   regs@4
+    //   1.0:    sound(1), engine(1), siddata(32)                       regs@2
+    //           (or payload_len==1 for "sound off", or bare 32)
+    //   1.1-3:  sids(1), sound(1), engine(1), siddata(32)              regs@3
+    //   1.4+:   sids(1), sound(1), engine(1), model(1), siddata(32)    regs@4
 
     let slice_regs = |offset: usize| -> Result<[u8; 25], String> {
         if payload.len() < offset + 25 {
