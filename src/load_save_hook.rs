@@ -3,7 +3,7 @@
 //! Implements KERNAL LOAD/SAVE hooks that intercept file operations and
 //! serve files from EasyFlash ROM banks with metadata at $B000+
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use crate::asm_wrapper::assemble_to_bytes;

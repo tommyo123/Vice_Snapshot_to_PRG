@@ -2,7 +2,7 @@
 //!
 //! Wraps the asm6502 library from GitHub for inline assembly.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 #![allow(dead_code)]

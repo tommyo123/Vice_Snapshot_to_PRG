@@ -3,7 +3,7 @@
 //! Reads PRG files from a directory and allocates them to unused banks.
 //! Generates metadata for file directory at $B000-$B7FF and filenames at $B800+
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use std::fs;

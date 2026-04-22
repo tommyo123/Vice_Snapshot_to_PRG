@@ -2,7 +2,7 @@
 //!
 //! Manages paths for working directory and CRT-specific options.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use std::path::{Path, PathBuf};

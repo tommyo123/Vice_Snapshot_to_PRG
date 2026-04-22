@@ -2,7 +2,7 @@
 //!
 //! Usage: vice-snapshot-to-prg-converter-cli [OPTIONS] <input.vsf> <output>
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use std::env;

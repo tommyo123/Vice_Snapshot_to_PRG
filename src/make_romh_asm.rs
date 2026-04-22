@@ -4,7 +4,7 @@
 //! The main restore code at $0340 handles all complex data copying.
 //! Also copies LOAD/SAVE trampoline to RAM if files are embedded.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use crate::asm_wrapper::assemble_to_bytes;

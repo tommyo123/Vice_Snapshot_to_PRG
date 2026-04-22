@@ -2,7 +2,7 @@
 //!
 //! Creates C64 cartridge files (.crt) with multiple banks for EasyFlash and Magic Desk formats.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use std::fs::File;

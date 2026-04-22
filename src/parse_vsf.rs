@@ -2,7 +2,7 @@
 //!
 //! Parses VICE snapshot files and extracts CPU, memory, VIC, CIA, and SID state.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 #![allow(dead_code)]

@@ -4,7 +4,7 @@
 //! On RESET, KERNAL checks for "CBM80" at $8004 and does JMP ($8000).
 //! Boot code copies trampoline to $0100 which copies restore code to $0340.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use crate::asm_wrapper::assemble_to_bytes;

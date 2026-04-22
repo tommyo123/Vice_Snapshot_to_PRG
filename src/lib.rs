@@ -3,7 +3,7 @@
 //! This library provides the core functionality for converting VICE snapshot
 //! files to self-restoring C64 PRG files, EasyFlash CRT or Magic Desk CRT cartridges.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 pub mod asm_wrapper;

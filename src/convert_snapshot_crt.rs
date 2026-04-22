@@ -3,7 +3,7 @@
 //! Converts Vice VSF snapshots to EasyFlash CRT cartridge files with optional
 //! LOAD/SAVE hooking for embedded PRG files.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use crate::config::CrtConfig;

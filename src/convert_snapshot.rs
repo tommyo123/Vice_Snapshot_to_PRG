@@ -2,7 +2,7 @@
 //!
 //! Converts Vice VSF snapshots to self-restoring PRG files with LZSA compression.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use crate::config::Config;

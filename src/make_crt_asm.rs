@@ -3,7 +3,7 @@
 //! Generates restore code that starts at $0340 (called from ROMH @ $E000).
 //! RAM lzsa is already copied to end of memory by ROMH, so we don't include it here.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use std::fs;

@@ -12,7 +12,7 @@
 //! copied to RAM, the cart must be killed permanently. LOAD/SAVE hooks are not
 //! supported -- use EasyFlash format for that.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use crate::config::CrtConfig;

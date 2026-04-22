@@ -1,6 +1,6 @@
 //! Converts VICE snapshot images (VSF) to C64 PRG files, EasyFlash CRT or Magic Desk CRT cartridges.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -1082,7 +1082,7 @@ fn show_help_window() {
     let help_text = format!(
         r#"VICE Snapshot to PRG/CRT Converter v{}
 
-Copyright (c) 2025 Tommy Olsen
+Copyright (c) 2025-2026 Tommy Olsen
 Licensed under the MIT License.
 
 ===============================================================

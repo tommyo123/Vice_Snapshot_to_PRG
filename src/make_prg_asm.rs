@@ -2,7 +2,7 @@
 //!
 //! Generates a self-restoring C64 PRG from compressed snapshot components.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 #![allow(dead_code)]

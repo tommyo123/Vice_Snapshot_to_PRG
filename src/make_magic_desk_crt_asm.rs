@@ -4,7 +4,7 @@
 //! This is a Magic Desk variant using $DE00 for bank select/disable.
 //! Uses only ROML banks (no ROMH). Permanent kill via $DE00 bit 7.
 //!
-// Copyright (c) 2025 Tommy Olsen
+// Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use std::fs;
