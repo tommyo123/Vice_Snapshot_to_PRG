@@ -94,7 +94,26 @@ struct ModuleVersion {
     minor: u8,
 }
 
-/// Module version matrix for supported `x64sc` producers:
+/// Emulator variant. Only VIC-II differs between them (viciisc vs vicii).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Machine {
+    C64,   // x64
+    C64Sc, // x64sc
+}
+
+impl Machine {
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "C64" => Some(Self::C64),
+            "C64SC" => Some(Self::C64Sc),
+            _ => None,
+        }
+    }
+}
+
+/// Module version matrix for supported producers.
+///
+/// `x64sc` (viciisc VIC-II, color RAM @757 or @761):
 ///
 /// | VICE | VSF | `MAINCPU` | `C64MEM` | `SID` simple | `VIC-II` |
 /// |------|-----|-----------|----------|--------------|----------|
@@ -104,6 +123,8 @@ struct ModuleVersion {
 /// | 3.4  | 1.1 | 1.1 (32b) | 0.1      | 1.4          | 1.1 (cram@757) |
 /// | 3.5  | 1.1 | 1.1 (32b) | 0.1      | 1.5          | 1.1 (cram@757) |
 /// | 3.10 | 2.0 | 1.3 (64b) | 0.1      | 1.5          | 1.3 (cram@761) |
+///
+/// `x64` (vicii VIC-II, color RAM @43, regs @1119 for all versions).
 fn check_file_version(major: u8, minor: u8) -> Result<(), String> {
     match (major, minor) {
         (1, 1) | (2, 0) => Ok(()),
@@ -158,27 +179,18 @@ impl ParseVSF {
 
         let mach = trim_nul(&read_fixed(&mut cur, 16)?).to_string();
 
-        // Validate machine type - must be exactly C64SC (x64sc emulator)
-        // C64SC is the cycle-accurate emulator that this converter requires
-        // Other variants (C64, C64C, etc.) have different internal structures
-        if mach != "C64SC" {
-            return Err(format!(
-                "Unsupported machine type '{}'\n\n\
-             Only snapshots from x64sc emulator (C64SC) are supported.\n\
-             Your snapshot is from '{}'.\n\n\
-             Please create a new snapshot using x64sc emulator\n\
-             (not x64, x64dtv, or other variants).",
-                mach, mach
-            ));
-        }
+        let machine = Machine::from_name(&mach).ok_or_else(|| format!(
+            "Unsupported machine type '{}'\n\n\
+             Supported: C64 (x64) and C64SC (x64sc).\n\
+             Your snapshot is from '{}'.",
+            mach, mach
+        ))?;
 
-        // Skip VICE version info header (21 bytes total)
-        // We don't validate VICE version - only snapshot format matters
-        // Format: "VICE Version" (12), separator (1), version string (4), SVN revision (4)
-        let _skip1 = read_fixed(&mut cur, 12)?;  // "VICE Version" marker
-        let _skip2 = read_u8(&mut cur)?;          // separator
-        let _skip3 = read_fixed(&mut cur, 4)?;    // version string
-        let _skip4 = read_u32(&mut cur)?;         // SVN revision
+        // 3.0+ inserts a 21-byte "VICE Version" block here; 2.4 does not. Peek first.
+        let pos = cur.position() as usize;
+        if self.raw.get(pos..pos + 12) == Some(b"VICE Version") {
+            let _ = read_fixed(&mut cur, 21)?;
+        }
 
         let mut cpu: Option<Cpu6510> = None;
         let mut mem: Option<C64Mem> = None;
@@ -216,7 +228,7 @@ impl ParseVSF {
             match name.as_str() {
                 "MAINCPU" => cpu = Some(parse_cpu(payload, mver)?),
                 "C64MEM" => mem = Some(parse_memory(payload, mver)?),
-                "VIC-II" => vic = Some(parse_vic(payload, cfg, mver)?),
+                "VIC-II" => vic = Some(parse_vic(payload, cfg, machine, mver)?),
                 "CIA1" => cia1 = Some(parse_cia(payload)?),
                 "CIA2" => cia2 = Some(parse_cia(payload)?),
                 "SID" => sid = Some(parse_sid(payload, cfg, mver)?),
@@ -407,28 +419,28 @@ fn parse_memory(payload: &[u8], _mver: ModuleVersion) -> Result<C64Mem, String> 
     Ok(C64Mem { cpu_port_data, cpu_port_dir, ram })
 }
 
-fn parse_vic(payload: &[u8], _cfg: &ParserConfig, mver: ModuleVersion) -> Result<VicII, String> {
-    // VIC-II module (viciisc):
-    //   +0:     VICII model (1 byte)
-    //   +1:     0x40 VIC registers (first 47 map to $D000-$D02E)
-    //   +N:     0x400 color RAM bytes
-    //
-    // Color RAM offset tracks `light_pen.trigger_cycle` width:
-    //   1.1 (VICE 2.4-3.5): uint32_t trigger_cycle => offset 757
-    //   1.3 (VICE 3.6+):    CLOCK (uint64_t)       => offset 761
-    let regs_off: usize = 1;
-    let color_off: usize = if mver.minor >= 3 { 761 } else { 757 };
+fn parse_vic(payload: &[u8], _cfg: &ParserConfig, machine: Machine, mver: ModuleVersion) -> Result<VicII, String> {
+    let (regs_off, color_off) = match machine {
+        // viciisc: model(1), regs(0x40), ..., cram(0x400).
+        // Color RAM offset depends on `light_pen.trigger_cycle` width:
+        //   1.1 => 757 (uint32_t), 1.3 => 761 (CLOCK/uint64_t).
+        Machine::C64Sc => (1usize, if mver.minor >= 3 { 761 } else { 757 }),
+
+        // vicii: 3 flags + cbuf(40), then cram, then ~52 bytes, then regs.
+        // Stable across 1.1-1.3.
+        Machine::C64 => (1119usize, 43usize),
+    };
 
     if payload.len() < regs_off + 47 {
         return Err(format!(
-            "VIC-II {}.{} module too small for registers ({} bytes)",
-            mver.major, mver.minor, payload.len()
+            "VIC-II {}.{} ({:?}) too small for registers ({} bytes)",
+            mver.major, mver.minor, machine, payload.len()
         ));
     }
     if payload.len() < color_off + 1024 {
         return Err(format!(
-            "VIC-II {}.{} module too small for color RAM (need {}, got {})",
-            mver.major, mver.minor, color_off + 1024, payload.len()
+            "VIC-II {}.{} ({:?}) too small for color RAM (need {}, got {})",
+            mver.major, mver.minor, machine, color_off + 1024, payload.len()
         ));
     }
 

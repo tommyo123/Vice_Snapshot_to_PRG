@@ -34,7 +34,7 @@ const BROWSE_BTN_WIDTH: i32 = 60;
 const TAB_HEIGHT: i32 = 490;
 
 fn main() {
-    let app = app::App::default().with_scheme(app::Scheme::Gtk);
+    let app = app::App::default().with_scheme(app::Scheme::Oxy);
 
     let icon_svg = r##"<svg width="256" height="256" viewBox="0 0 24 24" fill="none"
      stroke="#000000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
