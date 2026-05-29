@@ -6,7 +6,7 @@ The converter reconstructs the full machine state: CPU registers, RAM, Color RAM
 
 ## Status & License
 
-- **Version:** 2.1.0
+- **Version:** 2.2.0
 - **License:** MIT
 
 ## What it does

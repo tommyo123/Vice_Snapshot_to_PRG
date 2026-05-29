@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-05-29
+
+### Added
+- Extended VSF compatibility to file-format version 1.0 (VICE 1.15–2.3 era snapshots)
+
 ## [2.1.0] - 2026-04-22
 
 ### Added
@@ -186,7 +191,8 @@ All packages now include both GUI and CLI versions:
 - Stack pointer placement may be risky in edge cases
 - "Smart attach..." feature in VICE should be avoided
 
-[Unreleased]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v1.9.0...v2.0.0
 [1.9.0]: https://github.com/tommyo123/Vice_Snapshot_to_PRG/compare/v1.0.0...v1.9.0
