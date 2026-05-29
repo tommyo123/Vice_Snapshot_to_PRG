@@ -112,10 +112,11 @@ impl Machine {
     }
 }
 
-/// Accept VSF file versions 1.1 and 2.0. Per-module layout dispatches further below.
+/// Accept VSF file versions 1.0, 1.1 and 2.0. Per-module layout dispatches further below.
+/// 1.0 was used by VICE 1.x through 2.3; 1.1 by 2.4-3.5; 2.0 by 3.10+.
 fn check_file_version(major: u8, minor: u8) -> Result<(), String> {
     match (major, minor) {
-        (1, 1) | (2, 0) => Ok(()),
+        (1, 0) | (1, 1) | (2, 0) => Ok(()),
         _ => Err(format!(
             "Unsupported snapshot format version {}.{}",
             major, minor
