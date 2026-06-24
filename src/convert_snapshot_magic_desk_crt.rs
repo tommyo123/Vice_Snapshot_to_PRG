@@ -99,6 +99,10 @@ impl ConvertSnapshotMagicDeskCRT {
             }
         }
 
+        // Automatically clear RAM still holding the C64 power-on pattern so it
+        // becomes usable free space (mirrors the manual "f 0000 ffff 00" step).
+        FindRam::clear_poweron_pattern(&mut ram);
+
         // Hook the LOAD/SAVE trampoline into RAM BEFORE FindRam/PatchMem so the
         // trampoline area is seen as "used" and never allocated over (matches the
         // EasyFlash converter).

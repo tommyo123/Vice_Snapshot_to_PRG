@@ -44,15 +44,26 @@ reset
 
 This produces large uniform regions that the converter can use for restore code and compressed blocks. Without this, memory becomes fragmented and the converter may fail to allocate space.
 
+### Automatic power-on pattern clearing
+
+A freshly powered C64 (and VICE's default / Smart Attach RAM init) does not come up
+all-zero — it comes up in a fixed pattern of `$00`/`$FF` bytes in short (4-byte) runs.
+Those runs are too short for the free-area scan, so untouched RAM looks "used".
+
+The converter now detects this power-on pattern and automatically zeroes the regions
+that still hold it (an exact, conservative match — only memory the program never wrote
+is cleared). This recovers that RAM as free space without a manual fill, so snapshots
+taken **without** the `f 0000 ffff 00` step convert far more reliably.
+
+Manual clearing is still the most thorough option (it also flattens program-touched
+scratch areas), but is no longer required for the common case.
+
 ### About Smart Attach
 
-Smart Attach uses VICE's realistic C64-style memory initialization, not a uniform fill. This results in a patchy, patterned RAM layout that:
-
-- dramatically reduces compressible regions,
-- reduces compression ratios,
-- increases the chance of restore-block allocation failures.
-
-You can use Smart Attach, but only if you manually clear RAM first.
+Smart Attach uses VICE's realistic C64-style memory initialization, not a uniform fill.
+The automatic power-on pattern clearing (above) now handles the bulk of this, so Smart
+Attach snapshots usually convert without a manual fill. If a particular snapshot still
+fails to allocate, clear RAM manually (`f 0000 ffff 00`) and retry.
 
 ### Stack considerations
 
