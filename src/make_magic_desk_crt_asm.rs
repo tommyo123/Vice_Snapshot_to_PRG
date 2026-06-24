@@ -29,6 +29,9 @@ pub struct MakeMagicDeskCRTAsm {
     ram_lzsa_size: usize,
     restore_code_size: usize,
     boot_code_size: usize,
+    /// ROM bank where the restore payload begins (0 normally, 1 when bank 0 is
+    /// reserved as the LOAD directory bank). See MakeMagicDeskBootAsm.
+    restore_start_bank: usize,
 }
 
 impl MakeMagicDeskCRTAsm {
@@ -47,6 +50,7 @@ impl MakeMagicDeskCRTAsm {
         ram_lzsa_size: usize,
         restore_code_size: usize,
         boot_code_size: usize,
+        restore_start_bank: usize,
     ) -> Result<Self, String> {
         let cia1_bin = fs::read(cia1_bin_path)
             .map_err(|e| format!("Failed to read CIA1 file: {}", e))?;
@@ -78,6 +82,7 @@ impl MakeMagicDeskCRTAsm {
             ram_lzsa_size,
             restore_code_size,
             boot_code_size,
+            restore_start_bank,
         })
     }
 
@@ -93,13 +98,25 @@ impl MakeMagicDeskCRTAsm {
     fn generate_data_copy_code(&self, ram_end_data_start: usize, end_data_size: usize) -> String {
         let roml_bank_start = 0x8000usize;
         let roml_bank_size = 8192usize;
-        // ROML layout in bank 0: [boot code][restore code][relocated decompressor][RAM.lzsa]
-        // Boot code takes space at start of bank 0
-        let roml_end_data_start = roml_bank_start + self.boot_code_size + self.restore_code_size;
+        // ROML payload layout: [restore code][relocated decompressor][RAM.lzsa].
+        // - No embedded files (restore_start_bank == 0): the payload follows the
+        //   boot code in bank 0, so it begins at global offset boot_code_size.
+        // - Embedded files (restore_start_bank == 1): bank 0 is the directory
+        //   bank, so the payload begins at the start of bank 1 (global offset
+        //   one full bank).
+        let payload_base = if self.restore_start_bank == 0 {
+            self.boot_code_size
+        } else {
+            self.restore_start_bank * roml_bank_size
+        };
 
-        let source_bank = (roml_end_data_start - roml_bank_start) / roml_bank_size;
-        let source_hi = (roml_end_data_start >> 8) & 0xFF;
-        let source_lo = roml_end_data_start & 0xFF;
+        // The "end data" (relocated decompressor + RAM.lzsa) follows the restore
+        // code. Compute its bank and its address inside the ROML window ($8000).
+        let end_data_global_offset = payload_base + self.restore_code_size;
+        let source_bank = end_data_global_offset / roml_bank_size;
+        let source_addr = roml_bank_start + (end_data_global_offset % roml_bank_size);
+        let source_hi = (source_addr >> 8) & 0xFF;
+        let source_lo = source_addr & 0xFF;
         let ram_dest_hi = (ram_end_data_start >> 8) & 0xFF;
         let ram_dest_lo = ram_end_data_start & 0xFF;
 

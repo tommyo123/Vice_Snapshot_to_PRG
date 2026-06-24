@@ -16,7 +16,7 @@ The converter reconstructs the full machine state: CPU registers, RAM, Color RAM
 - Produces:
   - Self-extracting **PRG**, or
   - **EasyFlash CRT** with optional LOAD-intercept for embedded PRG files, or
-  - **Magic Desk CRT** (8K cart mode, ROML only).
+  - **Magic Desk CRT** (8K cart mode, ROML only) with the same optional LOAD-intercept.
 
 Not every snapshot converts cleanly — some programs rely on hardware state that can't be faithfully reproduced from the file alone.
 
@@ -87,13 +87,27 @@ If conversion fails due to insufficient free memory, the GUI offers to add RAM b
 
 - Boots directly from cartridge via CBM80 signature.
 - 8K cart mode: ROML only (`$8000–$9FFF`), no ROMH.
-- Permanent kill via `$DE00` bit 7 (cartridge cannot be re-enabled).
+- Banked out at runtime via `$DE00` bit 7. This is reversible (it only drives
+  EXROM), so the cartridge can be banked back in — which is what makes the LOAD
+  hook possible.
 - Minimum 8 banks, maximum 64 banks (512 KB).
-- **No LOAD/SAVE hooking** – use EasyFlash format for that.
+- Can embed PRG files and intercept `LOAD "NAME",8,1`, identical to EasyFlash.
 
-**ROM layout:**
+**ROM layout (no embedded files):**
 - **Bank 0 ROML**: Boot code (CBM80) + payload start
 - **Banks 0–N ROML**: Restore code + relocated decompressor + compressed RAM
+
+**ROM layout (with embedded files):**
+- **Bank 0 ROML** (directory): Boot code (`$8000`), LOAD handler (`$8400`),
+  file metadata (`$9000`), filenames (`$9800`)
+- **Banks 1–N ROML**: Restore code + relocated decompressor + compressed RAM
+- **Banks N+1… ROML**: Embedded PRG file data
+
+Magic Desk has no ROMH, so (unlike EasyFlash, which keeps the handler/metadata in
+ROMH at `$A000–$BFFF`) the directory lives in bank 0. Only a small trampoline sits
+in C64 RAM, in the cassette buffer (`$0334`); during a LOAD it banks the directory
+bank in, copies the requested file straight from ROM, and banks the cartridge back
+out.
 
 ## Usage
 
@@ -114,19 +128,22 @@ vice-snapshot-to-prg-converter-cli --crt --include-dir ./prg --hook-addr $0334 i
 
 # Magic Desk CRT
 vice-snapshot-to-prg-converter-cli --magic-desk --name "My Game" input.vsf output.crt
+
+# Magic Desk CRT with embedded PRGs
+vice-snapshot-to-prg-converter-cli --magic-desk --include-dir ./prg input.vsf output.crt
 ```
 
 **Options:**
 - `--prg` / `--crt` / `--magic-desk` – Force format (optional, auto-detected from extension for PRG/CRT)
 - `--name <name>` – Cartridge name (max 32 chars, CRT only)
-- `--include-dir <dir>` – Embed PRG files from directory (EasyFlash only)
-- `--hook-addr <hex>` – Override LOAD/SAVE hook address (EasyFlash only, requires `--include-dir`)
+- `--include-dir <dir>` – Embed PRG files from directory (EasyFlash or Magic Desk)
+- `--hook-addr <hex>` – Override LOAD/SAVE hook address (EasyFlash only; Magic Desk uses a fixed trampoline)
 
 Output files are overwritten without prompting.
 
 ### GUI
 
-The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type (EasyFlash or Magic Desk) from the dropdown. LOAD/SAVE hooking options are automatically disabled for Magic Desk. If conversion fails, a dialog offers to add manual RAM blocks.
+The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type (EasyFlash or Magic Desk) from the dropdown. LOAD/SAVE hooking with an include directory works for both cartridge types; the custom hook-address controls apply to EasyFlash only (Magic Desk uses a fixed trampoline). If conversion fails, a dialog offers to add manual RAM blocks.
 
 ### Recommended workflow
 

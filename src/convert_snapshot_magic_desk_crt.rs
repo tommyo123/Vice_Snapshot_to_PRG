@@ -3,26 +3,43 @@
 //! Converts Vice VSF snapshots to Magic Desk CRT cartridge files.
 //! Uses ROML-only layout with CBM80 boot signature.
 //!
-//! Architecture:
+//! Architecture (no embedded files):
 //! - Bank 0 ROML @ $8000: Boot code (CBM80) + payload start
 //! - Banks 0-N ROML: Restore code + relocated decompressor + RAM.lzsa
 //!
-//! Note: Magic Desk has only a permanent kill bit ($DE00 bit 7). Unlike EasyFlash
-//! ($DE02), there is no way to temporarily disable the cartridge. Once data is
-//! copied to RAM, the cart must be killed permanently. LOAD/SAVE hooks are not
-//! supported -- use EasyFlash format for that.
+//! Architecture (with embedded PRG files, LOAD hook):
+//! - Bank 0 ROML: directory bank
+//!     $8000 boot code (CBM80)
+//!     $8400 LOAD handler
+//!     $9000 file metadata
+//!     $9800 filenames
+//! - Banks 1-N ROML: Restore code + relocated decompressor + RAM.lzsa
+//! - Banks N+1..   : embedded PRG file data
+//!
+//! Magic Desk's $DE00 bit 7 toggles EXROM and is fully reversible, so (unlike the
+//! original assumption in earlier versions) the cartridge can be banked in and out
+//! at runtime. This makes a KERNAL LOAD hook possible, identical in behaviour to
+//! the EasyFlash format. The small trampoline lives in C64 RAM; the handler,
+//! metadata and filenames live in the cartridge directory bank.
 //!
 // Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
 use crate::config::CrtConfig;
 use crate::crt_builder::{CRTBuilder, CartridgeType, BANK_SIZE_8K};
+use crate::file_system_manager::FileSystemManager;
 use crate::find_ram::FindRam;
 use crate::make_magic_desk_boot_asm::MakeMagicDeskBootAsm;
 use crate::make_magic_desk_crt_asm::MakeMagicDeskCRTAsm;
+use crate::make_magic_desk_load_save::{
+    MagicDeskLoadSaveHook, FILENAMES_ADDRESS, HANDLER_ADDRESS, METADATA_ADDRESS,
+};
 use crate::parse_vsf::{C64Mem, C64Snapshot, ParseVSF};
 use crate::patch_mem::PatchMem;
 use std::fs;
+
+/// Maximum Magic Desk banks (6-bit bank register => 64 banks => 512 KB).
+const MAX_BANKS: usize = 64;
 
 pub struct ConvertSnapshotMagicDeskCRT {
     config: CrtConfig,
@@ -61,6 +78,17 @@ impl ConvertSnapshotMagicDeskCRT {
         let mut f8_ff_data = [0u8; 8];
         f8_ff_data.copy_from_slice(&snap.mem.ram[0xF8..=0xFF]);
 
+        // Discover embedded PRG files (if requested). Only enable the LOAD hook
+        // when there is at least one file to serve.
+        let want_files = self.config.include_dir.is_some() && self.config.patch_load_save;
+        let prg_files = if let (true, Some(dir)) = (want_files, self.config.include_dir.as_ref()) {
+            let fs_manager = FileSystemManager::with_filename_start(dir, FILENAMES_ADDRESS);
+            fs_manager.read_prg_files()?
+        } else {
+            Vec::new()
+        };
+        let has_files = !prg_files.is_empty();
+
         // Zero out manually specified extra blocks before compression
         let mut ram = snap.mem.ram.clone();
         for &(address, count) in &self.extra_ram_blocks {
@@ -71,7 +99,19 @@ impl ConvertSnapshotMagicDeskCRT {
             }
         }
 
-        // No LOAD/SAVE hooking for Magic Desk -- initialize RAM finder directly
+        // Hook the LOAD/SAVE trampoline into RAM BEFORE FindRam/PatchMem so the
+        // trampoline area is seen as "used" and never allocated over (matches the
+        // EasyFlash converter).
+        let mut load_save_hook = if has_files {
+            let mut hook = MagicDeskLoadSaveHook::new(true, None);
+            hook.hook_load_and_save(&mut ram[..])
+                .map_err(|e| format!("Failed to hook LOAD/SAVE: {}", e))?;
+            Some(hook)
+        } else {
+            None
+        };
+
+        // Initialize RAM finder AFTER trampoline is written.
         let mut ram_finder = FindRam::with_extra_blocks(&ram, &self.extra_ram_blocks);
 
         // Patch memory with restoration code (using PatchMem)
@@ -118,8 +158,13 @@ impl ConvertSnapshotMagicDeskCRT {
             .map_err(|e| format!("Failed to read RAM LZSA: {}", e))?;
         let ram_lzsa_size = ram_lzsa.len();
 
+        // When files are embedded, bank 0 is reserved for the directory and the
+        // restore payload begins at bank 1. Otherwise it follows the boot code in
+        // bank 0.
+        let restore_start_bank = if has_files { 1 } else { 0 };
+
         // Generate boot code first to know its size (pass 1 with restoreCodeSize=0)
-        let boot_asm_pass1 = MakeMagicDeskBootAsm::new(0);
+        let boot_asm_pass1 = MakeMagicDeskBootAsm::with_restore_start_bank(0, restore_start_bank);
         let boot_code_pass1 = boot_asm_pass1.generate_boot_code()?;
         let boot_code_size = boot_code_pass1.len();
 
@@ -138,6 +183,7 @@ impl ConvertSnapshotMagicDeskCRT {
             ram_lzsa_size,
             0,
             boot_code_size,
+            restore_start_bank,
         )?;
 
         let relocated_binary = crt_asm_temp.generate_relocated_decompressor()?;
@@ -158,6 +204,7 @@ impl ConvertSnapshotMagicDeskCRT {
             ram_lzsa_size,
             0, // First pass
             boot_code_size,
+            restore_start_bank,
         )?;
 
         let restore_code_pass1 = crt_asm_pass1.generate_restore_code_binary()?;
@@ -178,13 +225,15 @@ impl ConvertSnapshotMagicDeskCRT {
             ram_lzsa_size,
             restore_code_size,
             boot_code_size,
+            restore_start_bank,
         )?;
 
         let final_restore_code = crt_asm_final.generate_restore_code_binary()?;
         let final_relocated = crt_asm_final.generate_relocated_decompressor()?;
 
         // Regenerate boot code with correct restore code size (for trampoline page count)
-        let boot_asm_final = MakeMagicDeskBootAsm::new(final_restore_code.len());
+        let boot_asm_final =
+            MakeMagicDeskBootAsm::with_restore_start_bank(final_restore_code.len(), restore_start_bank);
         let boot_code_binary = boot_asm_final.generate_boot_code()?;
 
         // Verify boot code size didn't change
@@ -197,55 +246,68 @@ impl ConvertSnapshotMagicDeskCRT {
         }
 
         // Payload = restore code + relocated decompressor + RAM.lzsa
-        let total_payload_size = final_restore_code.len() + final_relocated.len() + ram_lzsa_size;
-
-        // Calculate required banks
-        let bank0_payload_space = BANK_SIZE_8K - boot_code_binary.len();
-        let required_banks = if total_payload_size <= bank0_payload_space {
-            1
-        } else {
-            let remaining = total_payload_size - bank0_payload_space;
-            1 + (remaining + BANK_SIZE_8K - 1) / BANK_SIZE_8K
-        };
-
-        let max_banks = 64;
-        if required_banks > max_banks {
-            return Err(format!(
-                "Snapshot data is too large for Magic Desk cartridge!\n\n\
-                 Required banks: {}\nMaximum banks:  {} ({} bytes)\n\n\
-                 The snapshot is too large or doesn't compress well enough.",
-                required_banks,
-                max_banks,
-                max_banks * BANK_SIZE_8K
-            ));
-        }
-
-        // Minimum 8 banks for Magic Desk compatibility
-        let num_banks = required_banks.max(8);
-
-        // Build the payload
-        let mut payload = Vec::with_capacity(total_payload_size);
+        let mut payload = Vec::new();
         payload.extend_from_slice(&final_restore_code);
         payload.extend_from_slice(&final_relocated);
         payload.extend_from_slice(&ram_lzsa);
 
-        // Create CRT builder
+        // Cartridge name
         let cartridge_name = self
             .config
             .cartridge_name
             .as_deref()
             .unwrap_or("VICE SNAPSHOT");
+
+        if has_files {
+            self.build_with_files(
+                output_path,
+                cartridge_name,
+                &boot_code_binary,
+                &payload,
+                &prg_files,
+                load_save_hook.as_mut().unwrap(),
+            )
+        } else {
+            self.build_plain(output_path, cartridge_name, &boot_code_binary, &payload)
+        }
+    }
+
+    /// Build a plain Magic Desk cartridge (no embedded files).
+    /// Bank 0 holds the boot code followed by the payload; the payload spills into
+    /// banks 1..N.
+    fn build_plain(
+        &self,
+        output_path: &str,
+        cartridge_name: &str,
+        boot_code_binary: &[u8],
+        payload: &[u8],
+    ) -> Result<(), String> {
+        let total_payload_size = payload.len();
+
+        let bank0_payload_space = BANK_SIZE_8K - boot_code_binary.len();
+        let required_banks = if total_payload_size <= bank0_payload_space {
+            1
+        } else {
+            let remaining = total_payload_size - bank0_payload_space;
+            1 + remaining.div_ceil(BANK_SIZE_8K)
+        };
+
+        if required_banks > MAX_BANKS {
+            return Err(Self::too_large_error(required_banks));
+        }
+
+        let num_banks = required_banks.max(8);
+
         let mut crt = CRTBuilder::new(CartridgeType::MagicDesk, num_banks, cartridge_name)?;
 
-        // Fill bank 0: boot code first, then payload
-        crt.fill_bank(0, &boot_code_binary, 0)?;
+        // Bank 0: boot code first, then payload
+        crt.fill_bank(0, boot_code_binary, 0)?;
 
         let mut data_offset = 0;
         let bank0_chunk = bank0_payload_space.min(payload.len());
         crt.fill_bank(0, &payload[..bank0_chunk], boot_code_binary.len())?;
         data_offset += bank0_chunk;
 
-        // Remaining banks: payload from offset 0
         let mut bank_idx = 1;
         while data_offset < payload.len() && bank_idx < num_banks {
             let chunk_size = BANK_SIZE_8K.min(payload.len() - data_offset);
@@ -255,19 +317,117 @@ impl ConvertSnapshotMagicDeskCRT {
         }
 
         if data_offset < payload.len() {
+            return Err(Self::write_error(payload.len(), data_offset));
+        }
+
+        crt.make_crt(output_path)
+    }
+
+    /// Build a Magic Desk cartridge with an embedded-file LOAD directory.
+    /// Bank 0 is the directory; the restore payload occupies banks 1..N; file data
+    /// occupies the banks after that.
+    fn build_with_files(
+        &self,
+        output_path: &str,
+        cartridge_name: &str,
+        boot_code_binary: &[u8],
+        payload: &[u8],
+        prg_files: &[crate::file_system_manager::PRGFile],
+        hook: &mut MagicDeskLoadSaveHook,
+    ) -> Result<(), String> {
+        // Restore payload occupies banks 1..=restore_payload_banks.
+        let restore_payload_banks = payload.len().div_ceil(BANK_SIZE_8K).max(1);
+        let first_file_bank = restore_payload_banks + 1;
+
+        let include_dir = self.config.include_dir.as_ref().unwrap();
+        let fs_manager = FileSystemManager::with_filename_start(include_dir, FILENAMES_ADDRESS);
+
+        // Allocate file data into the banks after the restore payload.
+        let available_banks: Vec<usize> = (first_file_bank..MAX_BANKS).collect();
+        let allocations = fs_manager.allocate_files(prg_files, &available_banks)?;
+        let metadata = fs_manager.generate_metadata(&allocations)?;
+        let filenames = fs_manager.generate_filenames(&allocations)?;
+
+        // Generate the LOAD handler that lives in the directory bank @ $8400.
+        let handler_code = hook.generate_handler_rom_code()?;
+
+        // The directory bank layout must not overlap: boot < $8400, handler <
+        // $9000, metadata <= 2KB at $9000, filenames <= 2KB at $9800.
+        let handler_offset = (HANDLER_ADDRESS - 0x8000) as usize;
+        let metadata_offset = (METADATA_ADDRESS - 0x8000) as usize;
+        let filenames_offset = (FILENAMES_ADDRESS - 0x8000) as usize;
+        if boot_code_binary.len() > handler_offset {
             return Err(format!(
-                "Failed to write all data to CRT banks!\n\n\
-                 Data size: {} bytes\nWritten:   {} bytes\nMissing:   {} bytes\n\n\
-                 This should not happen - please report this bug.",
-                payload.len(),
-                data_offset,
-                payload.len() - data_offset
+                "Boot code ({} bytes) overlaps the LOAD handler at $8400",
+                boot_code_binary.len()
+            ));
+        }
+        if handler_offset + handler_code.len() > metadata_offset {
+            return Err(format!(
+                "LOAD handler ({} bytes) overlaps the metadata table at $9000",
+                handler_code.len()
             ));
         }
 
-        // Write CRT file
-        crt.make_crt(output_path)?;
+        // Highest used bank.
+        let highest_file_bank = fs_manager
+            .get_allocated_banks(&allocations)
+            .into_iter()
+            .max()
+            .unwrap_or(restore_payload_banks);
+        let banks_needed = highest_file_bank + 1;
 
-        Ok(())
+        if banks_needed > MAX_BANKS {
+            return Err(Self::too_large_error(banks_needed));
+        }
+
+        let num_banks = banks_needed.max(8);
+        let mut crt = CRTBuilder::new(CartridgeType::MagicDesk, num_banks, cartridge_name)?;
+
+        // Bank 0: directory (boot + handler + metadata + filenames)
+        crt.fill_bank(0, boot_code_binary, 0)?;
+        crt.fill_bank(0, &handler_code, handler_offset)?;
+        crt.fill_bank(0, &metadata, metadata_offset)?;
+        crt.fill_bank(0, &filenames, filenames_offset)?;
+
+        // Banks 1..: restore payload
+        let mut data_offset = 0;
+        let mut bank_idx = 1;
+        while data_offset < payload.len() {
+            if bank_idx >= num_banks {
+                return Err(Self::write_error(payload.len(), data_offset));
+            }
+            let chunk_size = BANK_SIZE_8K.min(payload.len() - data_offset);
+            crt.fill_bank(bank_idx, &payload[data_offset..data_offset + chunk_size], 0)?;
+            data_offset += chunk_size;
+            bank_idx += 1;
+        }
+
+        // File data banks
+        fs_manager.write_files_to_banks(&mut crt, &allocations)?;
+
+        crt.make_crt(output_path)
+    }
+
+    fn too_large_error(required_banks: usize) -> String {
+        format!(
+            "Snapshot data is too large for Magic Desk cartridge!\n\n\
+             Required banks: {}\nMaximum banks:  {} ({} bytes)\n\n\
+             The snapshot is too large or doesn't compress well enough.",
+            required_banks,
+            MAX_BANKS,
+            MAX_BANKS * BANK_SIZE_8K
+        )
+    }
+
+    fn write_error(total: usize, written: usize) -> String {
+        format!(
+            "Failed to write all data to CRT banks!\n\n\
+             Data size: {} bytes\nWritten:   {} bytes\nMissing:   {} bytes\n\n\
+             This should not happen - please report this bug.",
+            total,
+            written,
+            total - written
+        )
     }
 }

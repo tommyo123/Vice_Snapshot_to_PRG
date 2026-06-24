@@ -39,13 +39,28 @@ pub struct FileAllocation {
 /// Manages file system in CRT cartridge
 pub struct FileSystemManager {
     include_dir: String,
+    /// Base address the filename block is mapped to at runtime.
+    /// EasyFlash: $B800 (ROMH). Magic Desk: $9800 (directory bank ROML window).
+    filename_start: u16,
 }
 
 impl FileSystemManager {
-    /// Create a new file system manager
+    /// Create a new file system manager (EasyFlash defaults)
     pub fn new(include_dir: &str) -> Self {
         Self {
             include_dir: include_dir.to_string(),
+            filename_start: FILENAME_START,
+        }
+    }
+
+    /// Create a file system manager with a custom filename base address.
+    ///
+    /// Used by the Magic Desk converter, whose directory bank maps the filename
+    /// block at $9800 (ROML window) rather than EasyFlash's $B800 (ROMH).
+    pub fn with_filename_start(include_dir: &str, filename_start: u16) -> Self {
+        Self {
+            include_dir: include_dir.to_string(),
+            filename_start,
         }
     }
 
@@ -241,7 +256,7 @@ impl FileSystemManager {
                 return Err("Too many files - metadata area full".to_string());
             }
 
-            let filename_ptr = FILENAME_START + allocation.filename_offset as u16;
+            let filename_ptr = self.filename_start + allocation.filename_offset as u16;
 
             // Pointer to filename (little-endian)
             metadata[offset] = (filename_ptr & 0xFF) as u8;

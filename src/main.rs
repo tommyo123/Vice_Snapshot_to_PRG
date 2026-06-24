@@ -328,27 +328,25 @@ fn main() {
     // Each block is (address, count) - cleared on snapshot change or tab switch
     let extra_ram_blocks_rc: Rc<RefCell<Vec<(u16, u16)>>> = Rc::new(RefCell::new(Vec::new()));
 
-    // CRT cartridge type callback - disable LOAD/SAVE for Magic Desk
+    // CRT cartridge type callback
+    //
+    // Both EasyFlash and Magic Desk support LOAD/SAVE hooking with embedded PRG
+    // files. Magic Desk uses a fixed trampoline location (the cassette buffer),
+    // so the custom-address controls don't apply to it and are disabled; their
+    // values are ignored by the Magic Desk converter regardless.
     {
         let hook_check = crt_hook_check_rc.clone();
         let auto_location_check = crt_auto_location_check_rc.clone();
         let addr_field = crt_addr_field_rc.clone();
-        let include_field = crt_include_field_rc.clone();
-        let include_btn = crt_include_btn_rc.clone();
 
         crt_type_choice.clone().set_callback(move |choice| {
             let is_magic_desk = choice.value() == 1;
+            // Hook + include directory are available for both cartridge types.
+            hook_check.borrow_mut().activate();
             if is_magic_desk {
-                // Magic Desk: force-uncheck and disable LOAD/SAVE hooking
-                hook_check.borrow_mut().set_checked(false);
-                hook_check.borrow_mut().deactivate();
+                // Trampoline address is fixed for Magic Desk.
                 auto_location_check.borrow_mut().deactivate();
                 addr_field.borrow_mut().deactivate();
-                include_field.borrow_mut().deactivate();
-                include_btn.borrow_mut().deactivate();
-            } else {
-                // EasyFlash: re-enable hook checkbox
-                hook_check.borrow_mut().activate();
             }
         });
     }
@@ -612,7 +610,7 @@ fn main() {
                 let output_path = crt_output.borrow().value();
                 let cart_name = crt_name.borrow().value();
                 let is_magic_desk = crt_type.borrow().value() == 1;
-                let hook_enabled = crt_hook.borrow().is_checked() && !is_magic_desk;
+                let hook_enabled = crt_hook.borrow().is_checked();
                 let auto_location = crt_auto_location.borrow().is_checked();
                 let addr_text = crt_addr.borrow().value();
                 let include_dir = crt_include.borrow().value();
@@ -634,13 +632,13 @@ fn main() {
                     return;
                 }
 
-                // Validate include directory when hook is enabled (EasyFlash only)
-                if hook_enabled && !is_magic_desk && include_dir.is_empty() {
+                // Validate include directory when hook is enabled
+                if hook_enabled && include_dir.is_empty() {
                     status_buffer.borrow_mut().set_text("Error: Include directory is required when LOAD/SAVE hooking is enabled.\n\nPlease select a directory containing PRG files to embed.");
                     return;
                 }
 
-                if hook_enabled && !is_magic_desk && !include_dir.is_empty() && !Path::new(&include_dir).is_dir() {
+                if hook_enabled && !include_dir.is_empty() && !Path::new(&include_dir).is_dir() {
                     let msg = format!("Error: Include directory not found:\n{}", include_dir);
                     status_buffer.borrow_mut().set_text(&msg);
                     return;
@@ -689,7 +687,7 @@ fn main() {
                         if !cart_name.is_empty() {
                             config.cartridge_name = Some(cart_name.clone());
                         }
-                        if hook_enabled && !is_magic_desk && !include_dir.is_empty() {
+                        if hook_enabled && !include_dir.is_empty() {
                             config.include_dir = Some(include_dir.clone());
                             config.patch_load_save = true;
                             config.auto_location = auto_location;

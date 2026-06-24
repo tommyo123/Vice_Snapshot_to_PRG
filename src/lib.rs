@@ -26,3 +26,4 @@ pub mod make_romh_asm;
 pub mod convert_snapshot_magic_desk_crt;
 pub mod make_magic_desk_boot_asm;
 pub mod make_magic_desk_crt_asm;
+pub mod make_magic_desk_load_save;
