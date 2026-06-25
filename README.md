@@ -142,15 +142,37 @@ vice-snapshot-to-prg-converter-cli --magic-desk --name "My Game" input.vsf outpu
 
 # Magic Desk CRT with embedded PRGs
 vice-snapshot-to-prg-converter-cli --magic-desk --include-dir ./prg input.vsf output.crt
+
+# EasyFlash SAVE: persistent flash filesystem
+#   ./ro       = read-only files (never change)
+#   ./defaults = rewritable files seeded with defaults (e.g. a high-score table)
+vice-snapshot-to-prg-converter-cli --ef-save --include-dir ./ro --rw-dir ./defaults input.vsf output.crt
 ```
 
 **Options:**
-- `--prg` / `--crt` / `--magic-desk` – Force format (optional, auto-detected from extension for PRG/CRT)
+- `--prg` / `--crt` / `--magic-desk` / `--ef-save` – Force format (optional, auto-detected from extension for PRG/CRT)
 - `--name <name>` – Cartridge name (max 32 chars, CRT only)
-- `--include-dir <dir>` – Embed PRG files from directory (EasyFlash or Magic Desk)
+- `--include-dir <dir>` – Embed PRG files from directory (EasyFlash, Magic Desk, or read-only area of `--ef-save`)
+- `--rw-dir <dir>` – Seed the rewritable area with default files (`--ef-save` only)
 - `--hook-addr <hex>` – Override LOAD/SAVE hook address (EasyFlash only; Magic Desk uses a fixed trampoline)
 
 Output files are overwritten without prompting.
+
+### EasyFlash SAVE (`--ef-save`)
+
+Produces an EasyFlash cartridge that restores the snapshot **and** gives the program a
+read/write flash filesystem (drunella's [libefs](https://github.com/Drunella/libefs)). The
+KERNAL `LOAD`/`SAVE` vectors are hooked, so the program uses ordinary `LOAD"NAME",8,1` and
+`SAVE"NAME",8` with no changes.
+
+- **Read-only area** (`--include-dir`) – files that never change (up to roughly a full D81's worth).
+- **Rewritable area** (`--rw-dir`) – seeded with default files (e.g. a starting high-score table);
+  `LOAD` searches both areas.
+- A plain `SAVE"NAME",8` over an existing file **overwrites** it (auto-promoted to the CBM `@0:`
+  replace command): the old entry is invalidated and the new data appended to free flash, so
+  high-scores and save-games rotate in place. A program that supplies its own `@...` command is
+  left untouched.
+- Run VICE with **`-easyflashcrtwrite`** to persist flash changes back to the `.crt` on a clean exit.
 
 ### GUI
 

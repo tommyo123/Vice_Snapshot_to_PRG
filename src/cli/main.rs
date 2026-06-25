@@ -29,6 +29,7 @@ struct CliArgs {
     format: OutputFormat,
     cartridge_name: Option<String>,
     include_dir: Option<String>,
+    rw_dir: Option<String>,
     hook_addr: Option<u16>,
 }
 
@@ -103,15 +104,24 @@ fn main() {
         eprintln!();
     }
 
-    // Validate include directory exists
-    if let Some(ref dir) = cli_args.include_dir {
+    // --rw-dir only applies to the EF-SAVE format
+    if cli_args.rw_dir.is_some() && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --rw-dir is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
+
+    // Validate include / rw directories exist
+    for dir in [cli_args.include_dir.as_ref(), cli_args.rw_dir.as_ref()]
+        .into_iter()
+        .flatten()
+    {
         let path = Path::new(dir);
         if !path.exists() {
-            eprintln!("Error: Include directory not found: {}", dir);
+            eprintln!("Error: Directory not found: {}", dir);
             process::exit(1);
         }
         if !path.is_dir() {
-            eprintln!("Error: Include path is not a directory: {}", dir);
+            eprintln!("Error: Path is not a directory: {}", dir);
             process::exit(1);
         }
     }
@@ -177,6 +187,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut format: Option<OutputFormat> = None;
     let mut cartridge_name: Option<String> = None;
     let mut include_dir: Option<String> = None;
+    let mut rw_dir: Option<String> = None;
     let mut hook_addr: Option<u16> = None;
     let mut positional: Vec<String> = Vec::new();
 
@@ -227,6 +238,13 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 }
                 include_dir = Some(args[i].clone());
             }
+            "--rw-dir" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--rw-dir requires a path".to_string());
+                }
+                rw_dir = Some(args[i].clone());
+            }
             "--hook-addr" => {
                 i += 1;
                 if i >= args.len() {
@@ -269,6 +287,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         format,
         cartridge_name,
         include_dir,
+        rw_dir,
         hook_addr,
     })
 }
@@ -335,6 +354,12 @@ fn convert_ef_save_crt(cli_args: &CliArgs) -> Result<(), String> {
     if let Some(ref name) = cli_args.cartridge_name {
         config = config.with_cartridge_name(name);
     }
+    if let Some(ref dir) = cli_args.include_dir {
+        config = config.with_include_dir(dir); // read-only area files
+    }
+    if let Some(ref dir) = cli_args.rw_dir {
+        config = config.with_rw_dir(dir); // rewritable-area default files
+    }
 
     let work_path = config.base_config.work_path.clone();
     let converter = ConvertSnapshotEfSaveCRT::new(config);
@@ -383,6 +408,7 @@ fn print_usage(program_name: &str) {
     println!("  --ef-save            EasyFlash CRT with persistent SAVE/LOAD (libefs flash FS)");
     println!("  --name <name>        Cartridge name (CRT only, max 32 chars)");
     println!("  --include-dir <dir>  Include PRG files from directory (EasyFlash or Magic Desk)");
+    println!("  --rw-dir <dir>       Default files seeded into the rewritable area (--ef-save only)");
     println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash only, overrides auto)");
     println!("  -h, --help           Show this help message");
     println!();
@@ -394,6 +420,7 @@ fn print_usage(program_name: &str) {
     println!("  {} --crt --include-dir ./files --hook-addr $0334 snapshot.vsf game.crt", name);
     println!("  {} --magic-desk --name \"My Game\" snapshot.vsf game.crt", name);
     println!("  {} --magic-desk --include-dir ./files snapshot.vsf game.crt", name);
+    println!("  {} --ef-save --include-dir ./ro --rw-dir ./defaults snapshot.vsf game.crt", name);
     println!();
     println!("IMPORTANT:");
     println!("  - Memory MUST be initialized before snapshot (f 0000 ffff 00)");

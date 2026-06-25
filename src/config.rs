@@ -73,6 +73,8 @@ pub struct CrtConfig {
     pub cartridge_name: Option<String>,
     /// Enable LOAD/SAVE hooking
     pub patch_load_save: bool,
+    /// EasyFlash SAVE: directory of default files seeded into the rewritable area
+    pub rw_dir: Option<String>,
 }
 
 impl CrtConfig {
@@ -85,7 +87,14 @@ impl CrtConfig {
             auto_location: true,
             cartridge_name: None,
             patch_load_save: false,
+            rw_dir: None,
         }
+    }
+
+    /// Set the directory of default files for the rewritable area (EF SAVE).
+    pub fn with_rw_dir(mut self, dir: &str) -> Self {
+        self.rw_dir = Some(dir.to_string());
+        self
     }
 
     /// Create with auto-generated work directory

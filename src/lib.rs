@@ -32,4 +32,5 @@ pub mod make_magic_desk_load_save;
 pub mod ef_save;
 pub mod make_ef_save_hook;
 pub mod make_ef_save_boot_asm;
+pub mod make_efs_image;
 pub mod convert_snapshot_ef_save_crt;

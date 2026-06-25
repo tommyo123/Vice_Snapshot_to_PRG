@@ -19,6 +19,7 @@
 use crate::config::CrtConfig;
 use crate::crt_builder::{CRTBuilder, CartridgeType, BANK_SIZE_8K};
 use crate::ef_save::{self, EfsConfig};
+use crate::make_efs_image::{build_efs_area, read_prg_dir, DIVISOR_8K, EFS_DIR_SIZE};
 use crate::find_ram::FindRam;
 use crate::make_crt_asm::MakeCRTAsm;
 use crate::make_ef_save_boot_asm::MakeEfSaveBootAsm;
@@ -88,7 +89,7 @@ impl ConvertSnapshotEfSaveCRT {
         let eapi_page_hi = (eapi_page >> 8) as u8;
 
         let (blob_addr, _) = ram_finder
-            .allocate_in_range(256, RAM_FLOOR, RAM_LIMIT)
+            .allocate_in_range(384, RAM_FLOOR, RAM_LIMIT)
             .ok_or("Not enough free RAM for the SAVE/LOAD trampoline")?;
 
         let mut hook = EfSaveHook::new(blob_addr, eapi_page_hi);
@@ -170,12 +171,44 @@ impl ConvertSnapshotEfSaveCRT {
             ));
         }
 
-        // bank 0 HIROM: read-only dir (empty) + EAPI + config + boot.
-        let cfg = EfsConfig::with_top_rw_sector(FIRST_RW_BANK);
+        // Read-only files (area 0) live in the banks right after the restore payload.
+        let first_ro_bank = (RESTORE_START_BANK + payload_banks) as u8;
+        let ro_files = match self.config.include_dir.as_deref() {
+            Some(d) => read_prg_dir(d)?,
+            None => Vec::new(),
+        };
+        let area0 = build_efs_area(&ro_files, first_ro_bank, 0, DIVISOR_8K)?;
+        let ro_banks = area0.file_banks(0, DIVISOR_8K);
+        if first_ro_bank as usize + ro_banks > FIRST_RW_BANK as usize {
+            return Err(format!(
+                "Read-only files ({} banks) collide with the save area at bank {}",
+                ro_banks, FIRST_RW_BANK
+            ));
+        }
+
+        // Default files (area 1) seed the rewritable area; its directory occupies
+        // the leading $1800 of the area, so files start at offset $1800.
+        let rw_files = match self.config.rw_dir.as_deref() {
+            Some(d) => read_prg_dir(d)?,
+            None => Vec::new(),
+        };
+        let area1 = build_efs_area(&rw_files, FIRST_RW_BANK, EFS_DIR_SIZE, DIVISOR_8K)?;
+        const RW_BANKS: usize = 8; // banks 56-63
+        if EFS_DIR_SIZE + area1.files.len() > RW_BANKS * BANK_SIZE_8K {
+            return Err("Default (rewritable) files do not fit in the save area".to_string());
+        }
+
+        // Config: read-only area 0 files placed at first_ro_bank (LOROM).
+        let mut cfg = EfsConfig::with_top_rw_sector(FIRST_RW_BANK);
+        cfg.area0.files_bank = first_ro_bank;
+        cfg.area0.files_high = 0x80;
+        cfg.area0.mode = ef_save::MODE_LLLL;
+
         let name = self.config.cartridge_name.as_deref().unwrap_or("VICE SNAPSHOT");
         let name_config = ef_save::generate_efs_name_and_config(name, &cfg);
+        let efs_dir = if ro_files.is_empty() { None } else { Some(area0.dir.as_slice()) };
         let boot = MakeEfSaveBootAsm::new(restore_code.len(), RESTORE_START_BANK);
-        let romh = boot.generate_romh(ef_save::eapi_code(), &name_config, None)?;
+        let romh = boot.generate_romh(ef_save::eapi_code(), &name_config, efs_dir)?;
 
         // Assemble the cartridge.
         let mut crt = CRTBuilder::new(CartridgeType::EasyFlash, 64, name)?;
@@ -185,17 +218,35 @@ impl ConvertSnapshotEfSaveCRT {
             crt.set_bank_romh(b, &ff)?;
         }
         crt.fill_bank(0, ef_save::lib_efs_code(), 0)?; // libefs
-        crt.set_bank_romh(0, &romh)?; // boot + EAPI + config + dir
+        crt.set_bank_romh(0, &romh)?; // boot + EAPI + config + area0 dir
 
-        let mut off = 0usize;
-        let mut bank = RESTORE_START_BANK;
-        while off < payload.len() {
-            let chunk = BANK_SIZE_8K.min(payload.len() - off);
-            crt.fill_bank(bank, &payload[off..off + chunk], 0)?;
-            off += chunk;
-            bank += 1;
-        }
+        // Restore payload (banks 1..)
+        place_lorom_stream(&mut crt, RESTORE_START_BANK, 0, &payload)?;
+        // Read-only files (banks first_ro_bank.., LOROM)
+        place_lorom_stream(&mut crt, first_ro_bank as usize, 0, &area0.files)?;
+        // Rewritable area 1: directory then files (LOROM of banks 56..)
+        place_lorom_stream(&mut crt, FIRST_RW_BANK as usize, 0, &area1.dir)?;
+        place_lorom_stream(&mut crt, FIRST_RW_BANK as usize, EFS_DIR_SIZE, &area1.files)?;
 
         crt.make_crt(output_path)
     }
+}
+
+/// Write a byte stream into LOROM banks starting at (`bank`, `offset`), flowing
+/// to the next bank's start when the 8 KB window fills.
+fn place_lorom_stream(
+    crt: &mut CRTBuilder,
+    mut bank: usize,
+    mut offset: usize,
+    data: &[u8],
+) -> Result<(), String> {
+    let mut p = 0;
+    while p < data.len() {
+        let chunk = (BANK_SIZE_8K - offset).min(data.len() - p);
+        crt.fill_bank(bank, &data[p..p + chunk], offset)?;
+        p += chunk;
+        bank += 1;
+        offset = 0;
+    }
+    Ok(())
 }

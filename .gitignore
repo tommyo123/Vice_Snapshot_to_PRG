@@ -65,3 +65,6 @@ Desktop.ini
 
 # test output
 *.prg
+
+# local VICE test scratch (carts, snapshots, monitor scripts)
+/test_md/

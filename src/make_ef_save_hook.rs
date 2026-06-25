@@ -75,7 +75,7 @@ save_tramp:
     LDA $AF
     STA save_end+1
     SEI
-    JSR copy_filename
+    JSR copy_filename_save
     JSR bank_in
     JSR ${efs_init:04X}        ; EFS_init
     LDA #${eapi:02X}
@@ -151,6 +151,47 @@ cf_loop:
 cf_done:
     RTS
 
+; Filename copy for SAVE. This cartridge is persistent storage, so a plain
+; SAVE"NAME" should replace any existing file (libefs, like a 1541, otherwise
+; reports "file exists"). We therefore auto-prepend the "@0:" replace command,
+; unless the program already supplied its own "@..." command.
+copy_filename_save:
+    LDA $B7
+    STA name_len
+    BEQ cfs_done
+    LDY #$00
+    LDA ($BB),Y
+    CMP #$40            ; '@' -> already a command, copy unchanged
+    BEQ cfs_plain
+    LDA #$40            ; '@'
+    STA ${t0:04X}
+    LDA #$30            ; '0'
+    STA ${t1:04X}
+    LDA #$3A            ; ':'
+    STA ${t2:04X}
+    LDY #$00
+cfs_pre:
+    LDA ($BB),Y
+    STA ${t3:04X},Y
+    INY
+    CPY $B7
+    BNE cfs_pre
+    LDA $B7
+    CLC
+    ADC #$03
+    STA name_len
+    RTS
+cfs_plain:
+    LDY name_len
+    DEY
+cfs_ploop:
+    LDA ($BB),Y
+    STA ${temp:04X},Y
+    DEY
+    BPL cfs_ploop
+cfs_done:
+    RTS
+
 bank_in:
     LDA #$37
     STA $01
@@ -197,6 +238,10 @@ end_hi:
             efs_util = EFS_UTIL,
             eapi = self.eapi_page_hi,
             temp = temp_addr,
+            t0 = temp_addr,
+            t1 = temp_addr + 1,
+            t2 = temp_addr + 2,
+            t3 = temp_addr + 3,
         )
     }
 
@@ -222,9 +267,10 @@ end_hi:
         Ok(bytes)
     }
 
-    /// Total RAM footprint to reserve: trampoline code + 16-byte temp filename.
+    /// Total RAM footprint to reserve: trampoline code + temp filename buffer.
+    /// The buffer holds up to a 16-char name plus the auto-prepended "@0:".
     pub fn reserved_len(&self) -> usize {
-        self.binary.len() + 16
+        self.binary.len() + 24
     }
 
     pub fn temp_filename_addr(&self) -> u16 {
@@ -235,7 +281,7 @@ end_hi:
     pub fn hook(&mut self, ram: &mut [u8]) -> Result<(), String> {
         let bin = self.generate_binary()?;
         let addr = self.blob_address as usize;
-        if addr + bin.len() + 16 > ram.len() {
+        if addr + bin.len() + 24 > ram.len() {
             return Err("EF save trampoline exceeds RAM bounds".to_string());
         }
         ram[addr..addr + bin.len()].copy_from_slice(&bin);
