@@ -1,4 +1,5 @@
-//! Converts VICE snapshot images (VSF) to C64 PRG files, EasyFlash CRT or Magic Desk CRT cartridges.
+//! Converts VICE snapshot images (VSF) to C64 PRG files, EasyFlash / Magic Desk
+//! CRT cartridges, or EasyFlash SAVE cartridges (persistent flash filesystem).
 //!
 // Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
@@ -19,19 +20,20 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::Path;
 
-use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION};
+use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, EapiBuffer, VERSION};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
 use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
+use vice_snapshot_to_prg_converter::convert_snapshot_ef_save_crt::ConvertSnapshotEfSaveCRT;
 
 const WINDOW_WIDTH: i32 = 720;
-const WINDOW_HEIGHT: i32 = 720;
+const WINDOW_HEIGHT: i32 = 830;
 const MARGIN: i32 = 25;
 const FIELD_HEIGHT: i32 = 35;
 const BUTTON_HEIGHT: i32 = 40;
 const BUTTON_WIDTH: i32 = 120;
 const BROWSE_BTN_WIDTH: i32 = 60;
-const TAB_HEIGHT: i32 = 490;
+const TAB_HEIGHT: i32 = 600;
 
 fn main() {
     let app = app::App::default().with_scheme(app::Scheme::Oxy);
@@ -181,7 +183,7 @@ fn main() {
     let mut crt_type_choice = menu::Choice::default()
         .with_pos(MARGIN + 125, crt_y)
         .with_size(160, 25);
-    crt_type_choice.add_choice("EasyFlash|Magic Desk");
+    crt_type_choice.add_choice("EasyFlash|Magic Desk|EasyFlash SAVE");
     crt_type_choice.set_value(0); // Default: EasyFlash
 
     crt_y += 35;
@@ -255,6 +257,54 @@ fn main() {
         .with_label("Browse...");
     crt_include_btn.deactivate(); // Disabled until hook is enabled
 
+    crt_y += FIELD_HEIGHT + 12;
+
+    // ---- EasyFlash SAVE only: rewritable defaults directory (--rw-dir) ----
+    let mut crt_rw_label = Frame::default()
+        .with_pos(MARGIN, crt_y)
+        .with_size(WINDOW_WIDTH - 2 * MARGIN, 25)
+        .with_label("Rewritable defaults directory (EasyFlash SAVE, e.g. a default high-score):");
+    crt_rw_label.set_label_size(13);
+    crt_rw_label.set_align(enums::Align::Left | enums::Align::Inside);
+    crt_rw_label.hide();
+
+    crt_y += 28;
+
+    let mut crt_rw_field = Input::default()
+        .with_pos(MARGIN, crt_y)
+        .with_size(WINDOW_WIDTH - 2 * MARGIN - BROWSE_BTN_WIDTH - 10, FIELD_HEIGHT);
+    crt_rw_field.hide();
+
+    let mut crt_rw_btn = Button::default()
+        .with_pos(WINDOW_WIDTH - MARGIN - BROWSE_BTN_WIDTH, crt_y)
+        .with_size(BROWSE_BTN_WIDTH, FIELD_HEIGHT)
+        .with_label("Browse...");
+    crt_rw_btn.hide();
+
+    crt_y += FIELD_HEIGHT + 10;
+
+    // ---- EasyFlash SAVE only: flash-driver (EAPI) buffer placement ----
+    let mut crt_eapi_label = Frame::default()
+        .with_pos(MARGIN, crt_y)
+        .with_size(150, 25)
+        .with_label("Flash buffer:");
+    crt_eapi_label.set_label_size(13);
+    crt_eapi_label.set_align(enums::Align::Left | enums::Align::Inside);
+    crt_eapi_label.hide();
+
+    let mut crt_eapi_choice = menu::Choice::default()
+        .with_pos(MARGIN + 110, crt_y)
+        .with_size(200, 25);
+    crt_eapi_choice.add_choice("Auto (free RAM / screen)|Screen RAM|Custom address");
+    crt_eapi_choice.set_value(0);
+    crt_eapi_choice.hide();
+
+    let mut crt_eapi_addr = Input::default()
+        .with_pos(MARGIN + 330, crt_y)
+        .with_size(90, 25);
+    crt_eapi_addr.set_value("$0900");
+    crt_eapi_addr.hide();
+
     crt_tab.end();
     tabs.end();
 
@@ -321,6 +371,12 @@ fn main() {
     let crt_addr_field_rc = Rc::new(RefCell::new(crt_addr_field.clone()));
     let crt_include_field_rc = Rc::new(RefCell::new(crt_include_field.clone()));
     let crt_include_btn_rc = Rc::new(RefCell::new(crt_include_btn.clone()));
+    let crt_rw_field_rc = Rc::new(RefCell::new(crt_rw_field.clone()));
+    let crt_rw_btn_rc = Rc::new(RefCell::new(crt_rw_btn.clone()));
+    let crt_rw_label_rc = Rc::new(RefCell::new(crt_rw_label.clone()));
+    let crt_eapi_choice_rc = Rc::new(RefCell::new(crt_eapi_choice.clone()));
+    let crt_eapi_addr_rc = Rc::new(RefCell::new(crt_eapi_addr.clone()));
+    let crt_eapi_label_rc = Rc::new(RefCell::new(crt_eapi_label.clone()));
     let status_buffer_rc = Rc::new(RefCell::new(status_buffer));
     let tabs_rc = Rc::new(RefCell::new(tabs.clone()));
 
@@ -330,23 +386,92 @@ fn main() {
 
     // CRT cartridge type callback
     //
-    // Both EasyFlash and Magic Desk support LOAD/SAVE hooking with embedded PRG
-    // files. Magic Desk uses a fixed trampoline location (the cassette buffer),
-    // so the custom-address controls don't apply to it and are disabled; their
-    // values are ignored by the Magic Desk converter regardless.
+    // EasyFlash and Magic Desk support optional LOAD/SAVE hooking with embedded
+    // PRG files (Magic Desk uses a fixed trampoline, so its address controls are
+    // disabled). EasyFlash SAVE always hooks and adds a rewritable-defaults
+    // directory and a flash-buffer placement control.
     {
         let hook_check = crt_hook_check_rc.clone();
         let auto_location_check = crt_auto_location_check_rc.clone();
         let addr_field = crt_addr_field_rc.clone();
+        let include_field = crt_include_field_rc.clone();
+        let include_btn = crt_include_btn_rc.clone();
+        let rw_label = crt_rw_label_rc.clone();
+        let rw_field = crt_rw_field_rc.clone();
+        let rw_btn = crt_rw_btn_rc.clone();
+        let eapi_label = crt_eapi_label_rc.clone();
+        let eapi_choice = crt_eapi_choice_rc.clone();
+        let eapi_addr = crt_eapi_addr_rc.clone();
 
         crt_type_choice.clone().set_callback(move |choice| {
             let is_magic_desk = choice.value() == 1;
-            // Hook + include directory are available for both cartridge types.
-            hook_check.borrow_mut().activate();
-            if is_magic_desk {
-                // Trampoline address is fixed for Magic Desk.
-                auto_location_check.borrow_mut().deactivate();
-                addr_field.borrow_mut().deactivate();
+            let is_ef_save = choice.value() == 2;
+
+            // Show the EasyFlash SAVE-only widgets only for that type.
+            if is_ef_save {
+                rw_label.borrow_mut().show();
+                rw_field.borrow_mut().show();
+                rw_btn.borrow_mut().show();
+                eapi_label.borrow_mut().show();
+                eapi_choice.borrow_mut().show();
+                eapi_addr.borrow_mut().show();
+            } else {
+                rw_label.borrow_mut().hide();
+                rw_field.borrow_mut().hide();
+                rw_btn.borrow_mut().hide();
+                eapi_label.borrow_mut().hide();
+                eapi_choice.borrow_mut().hide();
+                eapi_addr.borrow_mut().hide();
+            }
+
+            if is_ef_save {
+                // EasyFlash SAVE always hooks LOAD/SAVE; the checkbox is implied.
+                {
+                    let mut h = hook_check.borrow_mut();
+                    h.set_checked(true);
+                    h.deactivate();
+                }
+                include_field.borrow_mut().activate();
+                include_btn.borrow_mut().activate();
+                rw_field.borrow_mut().activate();
+                rw_btn.borrow_mut().activate();
+                auto_location_check.borrow_mut().activate();
+                if auto_location_check.borrow().is_checked() {
+                    addr_field.borrow_mut().deactivate();
+                } else {
+                    addr_field.borrow_mut().activate();
+                }
+                // EAPI address only matters for "Custom address".
+                if eapi_choice.borrow().value() == 2 {
+                    eapi_addr.borrow_mut().activate();
+                } else {
+                    eapi_addr.borrow_mut().deactivate();
+                }
+            } else {
+                hook_check.borrow_mut().activate(); // user controls hooking
+                let hooked = hook_check.borrow().is_checked();
+                if is_magic_desk || !hooked {
+                    auto_location_check.borrow_mut().deactivate();
+                    addr_field.borrow_mut().deactivate();
+                } else {
+                    auto_location_check.borrow_mut().activate();
+                    if !auto_location_check.borrow().is_checked() {
+                        addr_field.borrow_mut().activate();
+                    }
+                }
+            }
+            app::redraw();
+        });
+    }
+
+    // EAPI buffer choice: enable the address field only for "Custom address".
+    {
+        let eapi_addr = crt_eapi_addr_rc.clone();
+        crt_eapi_choice.clone().set_callback(move |c| {
+            if c.value() == 2 {
+                eapi_addr.borrow_mut().activate();
+            } else {
+                eapi_addr.borrow_mut().deactivate();
             }
         });
     }
@@ -577,6 +702,23 @@ fn main() {
         });
     }
 
+    // CRT rewritable-defaults directory browse (EasyFlash SAVE)
+    {
+        let rw_field = crt_rw_field_rc.clone();
+
+        crt_rw_btn.set_callback(move |_| {
+            let mut chooser = NativeFileChooser::new(dialog::NativeFileChooserType::BrowseDir);
+            chooser.set_title("Select Directory with Rewritable Default PRG Files");
+
+            chooser.show();
+            let filename = chooser.filename();
+
+            if !filename.as_os_str().is_empty() {
+                rw_field.borrow_mut().set_value(&filename.to_string_lossy());
+            }
+        });
+    }
+
     help_btn.set_callback(|_| {
         show_help_window();
     });
@@ -593,6 +735,9 @@ fn main() {
         let crt_auto_location = crt_auto_location_check_rc.clone();
         let crt_addr = crt_addr_field_rc.clone();
         let crt_include = crt_include_field_rc.clone();
+        let crt_rw = crt_rw_field_rc.clone();
+        let crt_eapi_choice = crt_eapi_choice_rc.clone();
+        let crt_eapi_addr = crt_eapi_addr_rc.clone();
         let status_buffer = status_buffer_rc.clone();
         let tabs = tabs_rc.clone();
         let extra_blocks = extra_ram_blocks_rc.clone();
@@ -609,12 +754,22 @@ fn main() {
                 let input_path = crt_input.borrow().value();
                 let output_path = crt_output.borrow().value();
                 let cart_name = crt_name.borrow().value();
-                let is_magic_desk = crt_type.borrow().value() == 1;
-                let hook_enabled = crt_hook.borrow().is_checked();
+                let cart_type = crt_type.borrow().value();
+                let is_magic_desk = cart_type == 1;
+                let is_ef_save = cart_type == 2;
+                // EasyFlash SAVE always hooks; otherwise honor the checkbox.
+                let hook_enabled = is_ef_save || crt_hook.borrow().is_checked();
                 let auto_location = crt_auto_location.borrow().is_checked();
                 let addr_text = crt_addr.borrow().value();
                 let include_dir = crt_include.borrow().value();
-                let cart_type_name = if is_magic_desk { "Magic Desk" } else { "EasyFlash" };
+                let rw_dir = crt_rw.borrow().value();
+                let eapi_mode = crt_eapi_choice.borrow().value();
+                let eapi_addr_text = crt_eapi_addr.borrow().value();
+                let cart_type_name = match cart_type {
+                    1 => "Magic Desk",
+                    2 => "EasyFlash SAVE",
+                    _ => "EasyFlash",
+                };
 
                 if input_path.is_empty() {
                     status_buffer.borrow_mut().set_text("Error: Please select an input VSF file");
@@ -632,14 +787,21 @@ fn main() {
                     return;
                 }
 
-                // Validate include directory when hook is enabled
-                if hook_enabled && include_dir.is_empty() {
+                // EasyFlash/Magic Desk LOAD hooking needs PRG files; EasyFlash SAVE
+                // works with an empty cartridge (both directories optional).
+                if hook_enabled && !is_ef_save && include_dir.is_empty() {
                     status_buffer.borrow_mut().set_text("Error: Include directory is required when LOAD/SAVE hooking is enabled.\n\nPlease select a directory containing PRG files to embed.");
                     return;
                 }
 
-                if hook_enabled && !include_dir.is_empty() && !Path::new(&include_dir).is_dir() {
+                if !include_dir.is_empty() && !Path::new(&include_dir).is_dir() {
                     let msg = format!("Error: Include directory not found:\n{}", include_dir);
+                    status_buffer.borrow_mut().set_text(&msg);
+                    return;
+                }
+
+                if is_ef_save && !rw_dir.is_empty() && !Path::new(&rw_dir).is_dir() {
+                    let msg = format!("Error: Rewritable defaults directory not found:\n{}", rw_dir);
                     status_buffer.borrow_mut().set_text(&msg);
                     return;
                 }
@@ -687,18 +849,45 @@ fn main() {
                         if !cart_name.is_empty() {
                             config.cartridge_name = Some(cart_name.clone());
                         }
-                        if hook_enabled && !include_dir.is_empty() {
+
+                        let parse_addr = |s: &str| -> Option<u16> {
+                            let c = s.trim()
+                                .trim_start_matches('$')
+                                .trim_start_matches("0x")
+                                .trim_start_matches("0X");
+                            u16::from_str_radix(c, 16).ok()
+                        };
+
+                        if is_ef_save {
+                            // Both directories are optional for EasyFlash SAVE.
+                            if !include_dir.is_empty() {
+                                config.include_dir = Some(include_dir.clone());
+                            }
+                            if !rw_dir.is_empty() {
+                                config.rw_dir = Some(rw_dir.clone());
+                            }
+                            config.patch_load_save = true;
+                            config.auto_location = auto_location;
+                            if !auto_location {
+                                if let Some(addr) = parse_addr(&addr_text) {
+                                    config.trampoline_address = Some(addr);
+                                }
+                            }
+                            config.eapi_buffer = match eapi_mode {
+                                1 => EapiBuffer::Screen,
+                                2 => parse_addr(&eapi_addr_text)
+                                    .map(EapiBuffer::Fixed)
+                                    .unwrap_or(EapiBuffer::Auto),
+                                _ => EapiBuffer::Auto,
+                            };
+                        } else if hook_enabled && !include_dir.is_empty() {
                             config.include_dir = Some(include_dir.clone());
                             config.patch_load_save = true;
                             config.auto_location = auto_location;
 
                             // Parse manual trampoline address if not using auto location
-                            if !auto_location && !addr_text.is_empty() {
-                                let cleaned = addr_text.trim()
-                                    .trim_start_matches('$')
-                                    .trim_start_matches("0x")
-                                    .trim_start_matches("0X");
-                                if let Ok(addr) = u16::from_str_radix(cleaned, 16) {
+                            if !auto_location {
+                                if let Some(addr) = parse_addr(&addr_text) {
                                     if addr >= 0x0100 {
                                         config.trampoline_address = Some(addr);
                                     }
@@ -707,11 +896,17 @@ fn main() {
                         }
 
                         let work_path = config.base_config.work_path.clone();
-                        let conversion_result = if is_magic_desk {
-                            let converter = ConvertSnapshotMagicDeskCRT::with_extra_blocks(config, current_blocks);
+                        let conversion_result = if is_ef_save {
+                            let converter =
+                                ConvertSnapshotEfSaveCRT::with_extra_blocks(config, current_blocks);
+                            converter.convert(&input_path, &output_path)
+                        } else if is_magic_desk {
+                            let converter =
+                                ConvertSnapshotMagicDeskCRT::with_extra_blocks(config, current_blocks);
                             converter.convert(&input_path, &output_path)
                         } else {
-                            let converter = ConvertSnapshotCRT::with_extra_blocks(config, current_blocks);
+                            let converter =
+                                ConvertSnapshotCRT::with_extra_blocks(config, current_blocks);
                             converter.convert(&input_path, &output_path)
                         };
 
@@ -1111,15 +1306,31 @@ EasyFlash:
 
 Magic Desk:
 - 8K cart mode: ROML only ($8000-$9FFF)
-- CBM80 boot, permanent kill via $DE00 bit 7
-- No LOAD/SAVE hooking (use EasyFlash for that)
+- CBM80 boot; $DE00 bit 7 banks the cart out (reversible)
+- Optional LOAD/SAVE hooking (fixed trampoline)
 
-LOAD/SAVE Hooking (EasyFlash only):
+EasyFlash SAVE:
+- EasyFlash that ALSO gives the program a persistent
+  read/write flash filesystem (via drunella's libefs)
+- LOAD/SAVE hooking is always on
+- Include directory  = read-only files (never change)
+- Rewritable directory = default files seeded into the
+  writable area (e.g. a starting high-score) that the
+  program can overwrite; a plain SAVE"NAME",8 replaces it
+- Garbage collection is automatic when the area fills
+- Flash buffer: the AM29F040 driver needs ~1 KB of RAM
+  reachable in Ultimax mode. "Auto" finds free RAM and
+  falls back to the screen; "Screen RAM" forces that
+  (clobbered during a save, then redrawn by the program);
+  "Custom address" sets a page-aligned $0400-$0C00 spot
+- Run VICE with -easyflashcrtwrite to persist saves to .crt
+
+LOAD/SAVE Hooking:
 When enabled, you can embed PRG files that can be loaded:
   LOAD "FILENAME",8,1
 
 The cartridge intercepts KERNAL LOAD/SAVE vectors and serves
-files from ROM banks instead of disk.
+files from ROM (and, for EasyFlash SAVE, reads/writes flash).
 
 ===============================================================
 

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
         - `--eapi-buffer <auto|screen|addr>` controls the flash buffer. **`auto`** (default) uses free RAM in `$0900-$0FFF`, and if there is none **falls back to the running program's screen RAM** — the screen is only clobbered during the LOAD/SAVE and the program redraws it afterward, so a RAM-full game can still save. `screen` forces that; an explicit address must be page-aligned in `$0400-$0C00` (VIC bank 0)
     - To persist changes back to the `.crt` on disk, run VICE with `-easyflashcrtwrite` (writes the image back on a clean exit/detach)
     - Embeds a locally-patched libefs (upstream `42e5570`'s defragment path jumps to a bogus address even with its callbacks disabled — it reads the config from the wrong flash bank; see `vendor/libefs/defragment-callback-fix.patch`)
+    - **GUI** - "EasyFlash SAVE" is now a cartridge type in the dropdown; selecting it reveals the rewritable-defaults directory picker and the flash-buffer placement control (Auto / Screen RAM / Custom address), at full parity with the CLI
 - **Magic Desk LOAD/SAVE hooking** - Magic Desk CRTs can now embed PRG files and intercept `LOAD "NAME",8,1`, identical to the EasyFlash feature
     - `--include-dir` now works with `--magic-desk`; the GUI LOAD/SAVE hook option is enabled for both cartridge types
     - Bank 0 becomes a directory bank: boot code (`$8000`), LOAD handler (`$8400`), file metadata (`$9000`), filenames (`$9800`); the restore payload moves to banks 1+ and file data follows

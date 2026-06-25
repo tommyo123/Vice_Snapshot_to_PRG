@@ -191,7 +191,7 @@ KERNAL `LOAD`/`SAVE` vectors are hooked, so the program uses ordinary `LOAD"NAME
 
 ### GUI
 
-The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type (EasyFlash or Magic Desk) from the dropdown. LOAD/SAVE hooking with an include directory works for both cartridge types; the custom hook-address controls apply to EasyFlash only (Magic Desk uses a fixed trampoline). If conversion fails, a dialog offers to add manual RAM blocks.
+The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type — **EasyFlash**, **Magic Desk**, or **EasyFlash SAVE** — from the dropdown. LOAD/SAVE hooking with an include directory works for all three; the custom hook-address controls apply to EasyFlash (Magic Desk uses a fixed trampoline). Choosing **EasyFlash SAVE** reveals its extra controls — a rewritable-defaults directory and the flash-buffer placement (Auto / Screen RAM / Custom address) — mirroring the CLI's `--rw-dir`, `--trampoline`, and `--eapi-buffer`. If conversion fails, a dialog offers to add manual RAM blocks.
 
 ### Recommended workflow
 
