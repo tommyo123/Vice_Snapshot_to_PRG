@@ -172,6 +172,9 @@ KERNAL `LOAD`/`SAVE` vectors are hooked, so the program uses ordinary `LOAD"NAME
   replace command): the old entry is invalidated and the new data appended to free flash, so
   high-scores and save-games rotate in place. A program that supplies its own `@...` command is
   left untouched.
+- **Garbage collection is automatic**: the rewritable area is two ping-pong halves; when one fills
+  with live + invalidated files, libefs copies the live files to the other half and erases the full
+  sector during a `SAVE`. Saving keeps working indefinitely with no data loss.
 - Run VICE with **`-easyflashcrtwrite`** to persist flash changes back to the `.crt` on a clean exit.
 
 ### GUI

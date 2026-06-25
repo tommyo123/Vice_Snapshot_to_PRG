@@ -30,8 +30,11 @@ use std::fs;
 
 /// Restore payload starts at bank 1 (bank 0 LOROM is libefs).
 const RESTORE_START_BANK: usize = 1;
-/// First bank of the rewritable area (top 64 KB sector of each chip).
-const FIRST_RW_BANK: u8 = 56;
+/// First bank of the rewritable area. Both rewritable areas live in HIROM
+/// (chip 1): area 1 = banks 48-55, area 2 = banks 56-63. Keeping them off chip 0
+/// (where libefs executes) means a defragment sector-erase never blanks the
+/// running code's chip. See [`EfsConfig::with_top_rw_sector`].
+const FIRST_RW_BANK: u8 = 48;
 /// RAM the trampoline + EAPI buffer must stay below (cart shadows $8000-$BFFF).
 const RAM_LIMIT: u16 = 0x8000;
 /// ...and above (avoid zero page, stack, BASIC input buffer, cassette buffer and
@@ -164,10 +167,12 @@ impl ConvertSnapshotEfSaveCRT {
         payload.extend_from_slice(&relocated);
         payload.extend_from_slice(&ram_lzsa);
         let payload_banks = payload.len().div_ceil(BANK_SIZE_8K);
-        if RESTORE_START_BANK + payload_banks > FIRST_RW_BANK as usize {
+        // Payload + read-only files share LOROM (chip 0); the rewritable areas are
+        // in HIROM (chip 1). Only the 64-bank LOROM space bounds the payload.
+        if RESTORE_START_BANK + payload_banks > 64 {
             return Err(format!(
-                "Snapshot payload ({} banks) collides with the save area at bank {}",
-                payload_banks, FIRST_RW_BANK
+                "Snapshot payload ({} banks) does not fit in LOROM",
+                payload_banks
             ));
         }
 
@@ -179,10 +184,12 @@ impl ConvertSnapshotEfSaveCRT {
         };
         let area0 = build_efs_area(&ro_files, first_ro_bank, 0, DIVISOR_8K)?;
         let ro_banks = area0.file_banks(0, DIVISOR_8K);
-        if first_ro_bank as usize + ro_banks > FIRST_RW_BANK as usize {
+        // Read-only files live in LOROM (chip 0); the rewritable areas are in HIROM
+        // (chip 1), so the only limit is the 64-bank LOROM space.
+        if first_ro_bank as usize + ro_banks > 64 {
             return Err(format!(
-                "Read-only files ({} banks) collide with the save area at bank {}",
-                ro_banks, FIRST_RW_BANK
+                "Read-only files ({} banks) do not fit in LOROM (start bank {})",
+                ro_banks, first_ro_bank
             ));
         }
 
@@ -193,7 +200,7 @@ impl ConvertSnapshotEfSaveCRT {
             None => Vec::new(),
         };
         let area1 = build_efs_area(&rw_files, FIRST_RW_BANK, EFS_DIR_SIZE, DIVISOR_8K)?;
-        const RW_BANKS: usize = 8; // banks 56-63
+        const RW_BANKS: usize = 8; // one area = 8 banks (64 KB)
         if EFS_DIR_SIZE + area1.files.len() > RW_BANKS * BANK_SIZE_8K {
             return Err("Default (rewritable) files do not fit in the save area".to_string());
         }
@@ -220,13 +227,16 @@ impl ConvertSnapshotEfSaveCRT {
         crt.fill_bank(0, ef_save::lib_efs_code(), 0)?; // libefs
         crt.set_bank_romh(0, &romh)?; // boot + EAPI + config + area0 dir
 
-        // Restore payload (banks 1..)
+        // Restore payload (banks 1.., LOROM)
         place_lorom_stream(&mut crt, RESTORE_START_BANK, 0, &payload)?;
         // Read-only files (banks first_ro_bank.., LOROM)
         place_lorom_stream(&mut crt, first_ro_bank as usize, 0, &area0.files)?;
-        // Rewritable area 1: directory then files (LOROM of banks 56..)
-        place_lorom_stream(&mut crt, FIRST_RW_BANK as usize, 0, &area1.dir)?;
-        place_lorom_stream(&mut crt, FIRST_RW_BANK as usize, EFS_DIR_SIZE, &area1.files)?;
+        // Rewritable area 1 seed: directory ($0000) then files ($1800), in HIROM of
+        // banks FIRST_RW_BANK.. (area 2 stays $FF/erased). Both areas are HIROM so a
+        // defragment erase never blanks chip 0 (libefs).
+        let mut area1_image = area1.dir.clone();
+        area1_image.extend_from_slice(&area1.files);
+        place_hirom_stream(&mut crt, FIRST_RW_BANK as usize, &area1_image)?;
 
         crt.make_crt(output_path)
     }
@@ -247,6 +257,18 @@ fn place_lorom_stream(
         p += chunk;
         bank += 1;
         offset = 0;
+    }
+    Ok(())
+}
+
+/// Write a byte stream into HIROM banks starting at `bank` offset 0. `CRTBuilder`
+/// only sets whole 8 KB ROMH banks, so each bank is built as an `$FF`-padded 8 KB
+/// image (matching erased flash) and written with `set_bank_romh`.
+fn place_hirom_stream(crt: &mut CRTBuilder, bank: usize, data: &[u8]) -> Result<(), String> {
+    for (i, chunk) in data.chunks(BANK_SIZE_8K).enumerate() {
+        let mut page = [0xFFu8; BANK_SIZE_8K];
+        page[..chunk.len()].copy_from_slice(chunk);
+        crt.set_bank_romh(bank + i, &page)?;
     }
     Ok(())
 }

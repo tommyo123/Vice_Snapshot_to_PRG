@@ -95,14 +95,20 @@ pub struct EfsConfig {
 
 impl EfsConfig {
     /// Default layout: read-only area 0 (directory bank 0 HIROM, files from bank
-    /// 1), and a 64K rewritable area in each chip of the top 8 banks
-    /// (`first_rw_bank`..`first_rw_bank+8`). area 1 = LOROM halves, area 2 =
-    /// HIROM halves — so the two GC areas share bank numbers across the chips.
+    /// 1 LOROM), and two 64K rewritable areas that ping-pong for garbage
+    /// collection, at `first_rw_bank..+8` and `first_rw_bank+8..+16`.
+    ///
+    /// Both rewritable areas live in **HIROM (chip 1)**. libefs's code executes
+    /// from chip 0 (bank 0 LOROM); an AM29F040 sector erase makes the *entire
+    /// chip* unreadable until it finishes, so if a rewritable area shared chip 0
+    /// with libefs, the defragment erase would make the running code vanish
+    /// mid-execution and crash the CPU. Keeping both rw areas on chip 1 means the
+    /// erase never touches the chip libefs runs from.
     pub fn with_top_rw_sector(first_rw_bank: u8) -> Self {
         Self {
             area0: EfsArea { dir_bank: 0, dir_high: 0xA0, files_bank: 1, files_high: 0x80, num_banks: 0, mode: MODE_LHLH },
-            area1: EfsArea { dir_bank: first_rw_bank, dir_high: 0x80, files_bank: first_rw_bank, files_high: 0x80, num_banks: 8, mode: MODE_LLLL },
-            area2: EfsArea { dir_bank: first_rw_bank, dir_high: 0xA0, files_bank: first_rw_bank, files_high: 0xA0, num_banks: 8, mode: MODE_HHHH },
+            area1: EfsArea { dir_bank: first_rw_bank, dir_high: 0xA0, files_bank: first_rw_bank, files_high: 0xA0, num_banks: 8, mode: MODE_HHHH },
+            area2: EfsArea { dir_bank: first_rw_bank + 8, dir_high: 0xA0, files_bank: first_rw_bank + 8, files_high: 0xA0, num_banks: 8, mode: MODE_HHHH },
         }
     }
 }
@@ -176,7 +182,7 @@ mod tests {
 
     #[test]
     fn config_block_matches_libefs_layout() {
-        let cfg = EfsConfig::with_top_rw_sector(56);
+        let cfg = EfsConfig::with_top_rw_sector(48);
         let block = generate_efs_name_and_config("VICE SNAPSHOT", &cfg);
 
         // EF name tag.
@@ -187,8 +193,8 @@ mod tests {
         assert_eq!(block[0x21], 0x03);
         // area 0 (read-only) at $1B22: dir bank 0 @ $A0, files bank 1 @ $80, lhlh.
         assert_eq!(&block[0x22..0x28], &[0x00, 0xA0, 0x01, 0x80, 0x00, MODE_LHLH]);
-        // area 1 (rw LOROM) at $1B28: banks 56-63, 8 banks, llll.
-        assert_eq!(&block[0x28..0x2E], &[56, 0x80, 56, 0x80, 8, MODE_LLLL]);
+        // area 1 (rw HIROM) at $1B28: banks 48-55, 8 banks, hhhh.
+        assert_eq!(&block[0x28..0x2E], &[48, 0xA0, 48, 0xA0, 8, MODE_HHHH]);
         // area 2 (rw HIROM) at $1B2E: banks 56-63, 8 banks, hhhh.
         assert_eq!(&block[0x2E..0x34], &[56, 0xA0, 56, 0xA0, 8, MODE_HHHH]);
     }

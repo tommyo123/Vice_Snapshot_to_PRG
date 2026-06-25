@@ -1,0 +1,38 @@
+diff --git a/src/lib/lib-efs-rw.s b/src/lib/lib-efs-rw.s
+index 536b4a1..25facdd 100644
+--- a/src/lib/lib-efs-rw.s
++++ b/src/lib/lib-efs-rw.s
+@@ -626,7 +626,11 @@
+         jsr efs_readef
+         sta zp_var_xd
+ 
+-        jsr rom_config_call_defragment_warning  ; defragment warning
++        ; PATCH: callback removed (see rom_config_call_defragment_warning) - it is
++        ; invoked here with the source bank selected and reads the config (bank 0)
++        ; from the wrong bank, jumping to a garbage vector. dfcall is always 0 in
++        ; this build, so the callback is a no-op anyway.
++        ; jsr rom_config_call_defragment_warning  ; defragment warning
+ 
+         ; copy directory
+         jsr rom_defragment_copy_dir
+@@ -639,7 +643,8 @@
+         jmp @loop
+ 
+       @leave:
+-        jsr rom_config_call_defragment_allclear  ; defragment finished
++        ; PATCH: callback removed (dfcall is always 0; see warning above).
++        ; jsr rom_config_call_defragment_allclear  ; defragment finished
+         jsr efs_finish_tempvars
+         clc
+         rts
+@@ -759,7 +764,9 @@
+         inc zp_var_x9  ; addr low
+         bne @noinc
+ 
+-        jsr rom_config_call_defragment_warning  ; defragment warning
++        ; PATCH: per-page defragment callback removed (dfcall always 0; the call
++        ; reads the config from the wrong bank mid-copy and crashes).
++        ; jsr rom_config_call_defragment_warning  ; defragment warning
+ 
+         ; inc page
+         inc zp_var_xa  ; addr high

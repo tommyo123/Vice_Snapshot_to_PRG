@@ -12,8 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - The KERNAL `LOAD`/`SAVE` vectors are hooked to libefs through a small RAM trampoline; `LOAD"NAME",8,1` and `SAVE"NAME",8` read and write flash with no program changes
     - **Two directories** - a read-only area (`--include-dir`, e.g. a full D81's worth of files that never change) plus a rewritable area pre-seeded with default files (`--rw-dir`, e.g. a starting high-score table). `LOAD` transparently searches both
     - **Persistent overwrites** - a plain `SAVE"NAME",8` over an existing file is auto-promoted to the CBM replace command (`@0:`), so high-scores / save-games rotate in place: the old directory entry is invalidated and the new file is appended to free flash. Programs that pass their own `@...` command are left untouched
-    - Reserves the top 64 KB of the 1 MB flash for the rewritable area; the rest holds the restore payload and the read-only files
+    - **Automatic garbage collection** - the rewritable area is two ping-pong halves; when one fills with live + invalidated files, libefs copies the live files to the other half and erases the full sector, transparently during a `SAVE`. Both halves live in HIROM (chip 1), keeping the sector erase off the chip libefs executes from. Verified across many save/defragment cycles with no data loss or session reset
+    - Reserves 128 KB of the 1 MB flash for the rewritable area (two 64 KB ping-pong halves); the rest holds the restore payload and the read-only files
     - To persist changes back to the `.crt` on disk, run VICE with `-easyflashcrtwrite` (writes the image back on a clean exit/detach)
+    - Embeds a locally-patched libefs (upstream `42e5570`'s defragment path jumps to a bogus address even with its callbacks disabled — it reads the config from the wrong flash bank; see `vendor/libefs/defragment-callback-fix.patch`)
 - **Magic Desk LOAD/SAVE hooking** - Magic Desk CRTs can now embed PRG files and intercept `LOAD "NAME",8,1`, identical to the EasyFlash feature
     - `--include-dir` now works with `--magic-desk`; the GUI LOAD/SAVE hook option is enabled for both cartridge types
     - Bank 0 becomes a directory bank: boot code (`$8000`), LOAD handler (`$8400`), file metadata (`$9000`), filenames (`$9800`); the restore payload moves to banks 1+ and file data follows
