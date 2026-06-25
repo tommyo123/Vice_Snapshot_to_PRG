@@ -11,7 +11,7 @@
 
 #![allow(dead_code)]
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RamBlock {
     pub address: u16,
     pub value: u8,
@@ -119,6 +119,35 @@ impl FindRam {
         } else {
             None
         }
+    }
+
+    /// Mark `[addr, addr+count)` as used so it won't be handed out by
+    /// [`allocate`]/[`allocate_in_range`]. Used to protect a caller-chosen
+    /// trampoline location. Blocks that overlap the range are trimmed or split.
+    pub fn reserve(&mut self, addr: u16, count: u16) {
+        if count == 0 {
+            return;
+        }
+        let r0 = addr as u32;
+        let r1 = r0 + count as u32;
+        let mut out: Vec<RamBlock> = Vec::new();
+        for b in &self.blocks {
+            let b0 = b.address as u32;
+            let b1 = b0 + b.count as u32;
+            if b1 <= r0 || b0 >= r1 {
+                out.push(*b); // no overlap
+                continue;
+            }
+            // left remainder
+            if b0 < r0 {
+                out.push(RamBlock { address: b.address, value: b.value, count: (r0 - b0) as u16 });
+            }
+            // right remainder
+            if b1 > r1 {
+                out.push(RamBlock { address: r1 as u16, value: b.value, count: (b1 - r1) as u16 });
+            }
+        }
+        self.blocks = out;
     }
 
     /// Expected byte of the C64 power-on RAM pattern at `addr`.
@@ -385,6 +414,28 @@ mod tests {
         // Request more than available
         let result = finder.allocate(64);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_reserve_splits_block() {
+        let mut ram = varied_ram();
+        // 256-byte free run at $3000
+        for i in 0x3000..0x3100 {
+            ram[i] = 0x00;
+        }
+        let mut finder = FindRam::new(&ram);
+        // Reserve 64 bytes in the middle ($3040-$307F).
+        finder.reserve(0x3040, 0x40);
+        // The reserved range must not be handed out: allocating 0x40 should land
+        // in one of the remainders ($3000-$303F or $3080-$30FF), never $3040.
+        for _ in 0..2 {
+            let (addr, _) = finder.allocate(0x40).expect("space remains");
+            assert!(
+                !(0x3040..0x3080).contains(&addr),
+                "allocated reserved region at ${:04X}",
+                addr
+            );
+        }
     }
 
     #[test]

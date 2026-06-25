@@ -91,9 +91,33 @@ impl ConvertSnapshotEfSaveCRT {
         let eapi_page = (eapi_alloc + 0xFF) & 0xFF00; // page-align upward
         let eapi_page_hi = (eapi_page >> 8) as u8;
 
-        let (blob_addr, _) = ram_finder
-            .allocate_in_range(384, RAM_FLOOR, RAM_LIMIT)
-            .ok_or("Not enough free RAM for the SAVE/LOAD trampoline")?;
+        // The LOAD/SAVE trampoline goes at a caller-chosen address if given
+        // (e.g. low stack), otherwise auto-placed in free RAM. Measure it first.
+        let mut hook = EfSaveHook::new(0, eapi_page_hi);
+        hook.generate_binary()?;
+        let tramp_len = hook.reserved_len() as u16;
+        let blob_addr = match self.config.trampoline_address {
+            Some(addr) => {
+                let end = addr as usize + tramp_len as usize;
+                // Must stay clear of the screen ($0400-$07FF) and the cart window.
+                let hits_screen = (addr as usize) < 0x0800 && end > 0x0400;
+                if end > RAM_LIMIT as usize || hits_screen {
+                    return Err(format!(
+                        "The SAVE/LOAD trampoline ({} bytes) does not fit at ${:04X}; \
+                         choose a location with that much free RAM below $0400 or above $0800.",
+                        tramp_len, addr
+                    ));
+                }
+                ram_finder.reserve(addr, tramp_len);
+                addr
+            }
+            None => {
+                ram_finder
+                    .allocate_in_range(tramp_len, RAM_FLOOR, RAM_LIMIT)
+                    .ok_or("Not enough free RAM for the SAVE/LOAD trampoline")?
+                    .0
+            }
+        };
 
         let mut hook = EfSaveHook::new(blob_addr, eapi_page_hi);
         hook.hook(&mut ram[..]).map_err(|e| format!("Failed to hook SAVE/LOAD: {}", e))?;

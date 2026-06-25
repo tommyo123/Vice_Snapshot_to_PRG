@@ -31,6 +31,7 @@ struct CliArgs {
     include_dir: Option<String>,
     rw_dir: Option<String>,
     hook_addr: Option<u16>,
+    trampoline: Option<u16>,
 }
 
 fn main() {
@@ -104,9 +105,13 @@ fn main() {
         eprintln!();
     }
 
-    // --rw-dir only applies to the EF-SAVE format
+    // --rw-dir / --trampoline only apply to the EF-SAVE format
     if cli_args.rw_dir.is_some() && cli_args.format != OutputFormat::EfSaveCrt {
         eprintln!("Warning: --rw-dir is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
+    if cli_args.trampoline.is_some() && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --trampoline is only used with --ef-save format, ignoring");
         eprintln!();
     }
 
@@ -189,6 +194,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut include_dir: Option<String> = None;
     let mut rw_dir: Option<String> = None;
     let mut hook_addr: Option<u16> = None;
+    let mut trampoline: Option<u16> = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -245,6 +251,13 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 }
                 rw_dir = Some(args[i].clone());
             }
+            "--trampoline" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--trampoline requires tape|stack|<hex address>".to_string());
+                }
+                trampoline = Some(parse_trampoline(&args[i])?);
+            }
             "--hook-addr" => {
                 i += 1;
                 if i >= args.len() {
@@ -289,7 +302,23 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         include_dir,
         rw_dir,
         hook_addr,
+        trampoline,
     })
+}
+
+/// Parse a `--trampoline` value: `tape` (cassette buffer $033C), `stack` (low
+/// stack $0100), or an explicit hex address (`$5000`/`0x5000`/`5000`). When
+/// unset the converter auto-places the trampoline in free RAM.
+fn parse_trampoline(s: &str) -> Result<u16, String> {
+    match s.to_lowercase().as_str() {
+        "tape" => Ok(0x033C),
+        "stack" => Ok(0x0100),
+        _ => {
+            let h = s.trim_start_matches('$').trim_start_matches("0x");
+            u16::from_str_radix(h, 16)
+                .map_err(|_| format!("Invalid --trampoline value: {} (use tape|stack|<hex>)", s))
+        }
+    }
 }
 
 fn convert_prg(cli_args: &CliArgs) -> Result<(), String> {
@@ -360,6 +389,9 @@ fn convert_ef_save_crt(cli_args: &CliArgs) -> Result<(), String> {
     if let Some(ref dir) = cli_args.rw_dir {
         config = config.with_rw_dir(dir); // rewritable-area default files
     }
+    if let Some(addr) = cli_args.trampoline {
+        config = config.with_trampoline_address(addr);
+    }
 
     let work_path = config.base_config.work_path.clone();
     let converter = ConvertSnapshotEfSaveCRT::new(config);
@@ -409,6 +441,10 @@ fn print_usage(program_name: &str) {
     println!("  --name <name>        Cartridge name (CRT only, max 32 chars)");
     println!("  --include-dir <dir>  Include PRG files from directory (EasyFlash or Magic Desk)");
     println!("  --rw-dir <dir>       Default files seeded into the rewritable area (--ef-save only)");
+    println!("  --trampoline <loc>   SAVE/LOAD trampoline location (--ef-save only): a hex");
+    println!("                       address, or tape ($033C) / stack ($0100). Default: auto");
+    println!("                       (free RAM). The trampoline is ~300 bytes, so tape/stack");
+    println!("                       are too small; use a hex address of a large free region");
     println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash only, overrides auto)");
     println!("  -h, --help           Show this help message");
     println!();
