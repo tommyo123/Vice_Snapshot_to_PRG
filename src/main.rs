@@ -651,6 +651,8 @@ fn main() {
         let input_field = crt_input_field_rc.clone();
         let output_field = crt_output_field_rc.clone();
         let extra_blocks = extra_ram_blocks_rc.clone();
+        let include_field = crt_include_field_rc.clone();
+        let rw_field = crt_rw_field_rc.clone();
 
         crt_input_btn.set_callback(move |_| {
             let mut chooser = NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
@@ -677,6 +679,14 @@ fn main() {
                 // Default output = same name as input but with .crt extension
                 let suggested_output = filename.with_extension("crt");
                 output_field.borrow_mut().set_value(&suggested_output.to_string_lossy());
+
+                // Prepopulate load and save paths for prgs with snapshot path + \load and \save
+                if let Some(parent) = filename.parent() {
+                    let load_dir = parent.join("load");
+                    let save_dir = parent.join("save");
+                    include_field.borrow_mut().set_value(&load_dir.to_string_lossy());
+                    rw_field.borrow_mut().set_value(&save_dir.to_string_lossy());
+                }
             }
         });
     }

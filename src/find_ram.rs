@@ -200,21 +200,36 @@ impl FindRam {
         const START: usize = 0x0200;
         const END: usize = 0xFFEF; // inclusive, matches the free-block scan range
         const MIN_PATTERN_SPAN: usize = 64;
+        const MAX_CONSECUTIVE_MISMATCHES: usize = 3;
 
         let mut cleared = 0u32;
         let mut addr = START;
         while addr <= END {
             if ram[addr] == Self::poweron_pattern_byte(addr as u16) {
                 let span_start = addr;
-                while addr <= END && ram[addr] == Self::poweron_pattern_byte(addr as u16) {
+                let mut span_end = addr;
+                let mut consecutive_mismatches = 0;
+
+                while addr <= END {
+                    if ram[addr] == Self::poweron_pattern_byte(addr as u16) {
+                        span_end = addr + 1;
+                        consecutive_mismatches = 0;
+                    } else {
+                        consecutive_mismatches += 1;
+                        if consecutive_mismatches > MAX_CONSECUTIVE_MISMATCHES {
+                            break;
+                        }
+                    }
                     addr += 1;
                 }
-                if addr - span_start >= MIN_PATTERN_SPAN {
-                    for b in &mut ram[span_start..addr] {
+
+                if span_end - span_start >= MIN_PATTERN_SPAN {
+                    for b in &mut ram[span_start..span_end] {
                         *b = 0;
                     }
-                    cleared += (addr - span_start) as u32;
+                    cleared += (span_end - span_start) as u32;
                 }
+                addr = span_end;
             } else {
                 addr += 1;
             }
@@ -245,16 +260,22 @@ impl FindRam {
             if end >= start + req { Some((start, end)) } else { None }
         };
 
+        // Pick the usable block that is highest in memory (i.e. has the highest end address in range)
         let index = self
             .blocks
             .iter()
             .enumerate()
             .filter(|(_, b)| usable(b).is_some())
-            .min_by_key(|(_, b)| b.count)
+            .max_by_key(|(_, b)| {
+                let (_, end) = usable(b).unwrap();
+                end
+            })
             .map(|(i, _)| i)?;
 
         let block = self.blocks[index].clone();
-        let (alloc_start, _) = usable(&block).unwrap();
+        let (_, end) = usable(&block).unwrap();
+        // Carve the allocation from the top/end of the usable portion of the block
+        let alloc_start = end - req;
         let value = block.value;
         let block_start = block.address as u32;
         let block_end = block_start + block.count as u32;
@@ -509,5 +530,34 @@ mod tests {
         let cleared = FindRam::clear_poweron_pattern(&mut ram);
         assert_eq!(cleared, 0);
         assert_eq!(ram[0x6080], 0x55);
+    }
+
+    #[test]
+    fn test_allocate_in_range_highest() {
+        let mut ram = varied_ram();
+
+        // Plant two 512-byte blocks of zeros: one at $2000-$2200, one at $6000-$6200
+        for i in 0x2000..0x2200 {
+            ram[i] = 0x00;
+        }
+        for i in 0x6000..0x6200 {
+            ram[i] = 0x00;
+        }
+        ram[0x6200] = 0x01; // prevent natural 0x00 at 0x6200 (since 0x6200 as u8 == 0) from extending the block
+
+        let mut finder = FindRam::new(&ram);
+        // Ask for 100 bytes in range [$1000, $7000).
+        // Since $6000-$6200 is highest, it should pick that block.
+        // It should carve the 100 bytes from the end of the usable part of the block:
+        // usable end in block is min(0x6200, 0x7000) = 0x6200.
+        // So alloc_start = 0x6200 - 100 = 0x619C.
+        let alloc = finder.allocate_in_range(100, 0x1000, 0x7000);
+        assert_eq!(alloc, Some((0x619C, 0x00)));
+
+        // The remaining parts of that block should be:
+        // Left remainder: $6000 with count 412 (0x619C - 0x6000)
+        let blocks = finder.blocks();
+        let block_6000 = blocks.iter().find(|b| b.address == 0x6000).unwrap();
+        assert_eq!(block_6000.count, 412);
     }
 }

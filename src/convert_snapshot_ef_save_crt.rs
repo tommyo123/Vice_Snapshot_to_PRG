@@ -107,12 +107,13 @@ impl ConvertSnapshotEfSaveCRT {
         let blob_addr = match self.config.trampoline_address {
             Some(addr) => {
                 let end = addr as usize + tramp_len as usize;
-                // Must stay clear of the screen ($0400-$07FF) and the cart window.
+                // Must stay clear of the screen ($0400-$07FF) and the cart window ($8000-$BFFF).
                 let hits_screen = (addr as usize) < 0x0800 && end > 0x0400;
-                if end > RAM_LIMIT as usize || hits_screen {
+                let hits_cart = (addr as usize) < 0xC000 && end > 0x8000;
+                if end > 0xD000 || hits_screen || hits_cart {
                     return Err(format!(
                         "The SAVE/LOAD trampoline ({} bytes) does not fit at ${:04X}; \
-                         choose a location with that much free RAM below $0400 or above $0800.",
+                         choose a location with that much free RAM below $0400, in $0800-$7FFF, or in $C000-$CFFF.",
                         tramp_len, addr
                     ));
                 }
@@ -120,10 +121,15 @@ impl ConvertSnapshotEfSaveCRT {
                 addr
             }
             None => {
-                ram_finder
-                    .allocate_in_range(tramp_len, RAM_FLOOR, RAM_LIMIT)
-                    .ok_or("Not enough free RAM for the SAVE/LOAD trampoline")?
-                    .0
+                // Try to allocate in $C000-$CFFF first, then fall back to $0900-$7FFF
+                if let Some((addr, _)) = ram_finder.allocate_in_range(tramp_len, 0xC000, 0xD000) {
+                    addr
+                } else {
+                    ram_finder
+                        .allocate_in_range(tramp_len, RAM_FLOOR, RAM_LIMIT)
+                        .ok_or("Not enough free RAM for the SAVE/LOAD trampoline")?
+                        .0
+                }
             }
         };
 
@@ -313,11 +319,13 @@ impl ConvertSnapshotEfSaveCRT {
 
         let is_using_screen = (eapi_page_hi as u16) << 8 == screen_addr;
         let stash_addr = if is_using_screen || self.config.force_stash {
-            // Try to allocate a 1024-byte block in $0800-$7FFF.
-            if let Some((alloc, _)) = ram_finder.allocate_in_range(EAPI_BUFFER_LEN, 0x0800, 0x8000) {
+            // Try to allocate a 1024-byte block in $C000-$CFFF first, then fall back to $0800-$7FFF.
+            if let Some((alloc, _)) = ram_finder.allocate_in_range(EAPI_BUFFER_LEN, 0xC000, 0xD000) {
+                Some(alloc)
+            } else if let Some((alloc, _)) = ram_finder.allocate_in_range(EAPI_BUFFER_LEN, 0x0800, 0x8000) {
                 Some(alloc)
             } else if self.config.force_stash {
-                return Err("Failed to force screen stashing: no free 1 KB block in $0800-$7FFF found".to_string());
+                return Err("Failed to force screen stashing: no free 1 KB block in $C000-$CFFF or $0800-$7FFF found".to_string());
             } else {
                 None
             }
