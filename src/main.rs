@@ -943,7 +943,7 @@ fn main() {
                         let conversion_result = if is_ef_save {
                             let converter =
                                 ConvertSnapshotEfSaveCRT::with_extra_blocks(config, current_blocks);
-                            converter.convert(&input_path, &output_path).map(|(t, s)| Some((t, s)))
+                            converter.convert(&input_path, &output_path).map(|(t, s, e)| Some((t, s, e)))
                         } else if is_magic_desk {
                             let converter =
                                 ConvertSnapshotMagicDeskCRT::with_extra_blocks(config, current_blocks);
@@ -966,10 +966,14 @@ fn main() {
                                 "Success!\n\nSnapshot successfully converted to {} CRT:\n{}",
                                 cart_type_name, output_path
                             );
-                            if let Some((tramp, stash)) = addr_info {
+                            if let Some((tramp, stash, eapi)) = addr_info {
                                 success_msg.push_str(&format!(
                                     "\n\nSAVE/LOAD trampoline address: ${:04X}",
                                     tramp
+                                ));
+                                success_msg.push_str(&format!(
+                                    "\nEAPI flash buffer address:    ${:04X}",
+                                    eapi
                                 ));
                                 if let Some(st) = stash {
                                     success_msg.push_str(&format!(

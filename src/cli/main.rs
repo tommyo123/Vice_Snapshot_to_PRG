@@ -456,9 +456,10 @@ fn convert_ef_save_crt(cli_args: &CliArgs) -> Result<(), String> {
     let result = converter.convert(&cli_args.input_path, &cli_args.output_path);
 
     let _ = cleanup_work_dir(&work_path);
-    let (tramp_addr, stash_addr) = result?;
+    let (tramp_addr, stash_addr, eapi_addr) = result?;
 
     println!("SAVE/LOAD trampoline address: ${:04X}", tramp_addr);
+    println!("EAPI flash buffer address:    ${:04X}", eapi_addr);
     if let Some(stash) = stash_addr {
         println!("Screen RAM stash address:     ${:04X}", stash);
     } else {

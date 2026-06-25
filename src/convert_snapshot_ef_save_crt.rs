@@ -60,7 +60,7 @@ impl ConvertSnapshotEfSaveCRT {
         Self { config, extra_ram_blocks }
     }
 
-    pub fn convert(&self, input_path: &str, output_path: &str) -> Result<(u16, Option<u16>), String> {
+    pub fn convert(&self, input_path: &str, output_path: &str) -> Result<(u16, Option<u16>, u16), String> {
         if std::path::Path::new(output_path).exists() {
             return Err(format!(
                 "Output file already exists:\n{}\n\nPlease choose a different filename.",
@@ -280,7 +280,7 @@ impl ConvertSnapshotEfSaveCRT {
         place_hirom_stream(&mut crt, FIRST_RW_BANK as usize, &area1_image)?;
 
         crt.make_crt(output_path)?;
-        Ok((blob_addr, stash_addr))
+        Ok((blob_addr, stash_addr, (eapi_page_hi as u16) << 8))
     }
 
     /// Decide where the EAPI flash buffer lives and return its page high byte
