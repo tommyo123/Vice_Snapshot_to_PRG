@@ -44,7 +44,8 @@ const RAM_FLOOR: u16 = 0x0900;
 /// Auto placement searches $0900-$0FFF (above the default screen); the screen
 /// fallback uses $0400-$0C00. The buffer is a page-aligned ~1 KB.
 const EAPI_BUFFER_CEIL: u16 = 0x1000;
-const EAPI_BUFFER_LEN: u16 = 1024;
+const EAPI_BUFFER_LEN: u16 = 768;
+const SCREEN_STASH_LEN: u16 = 1024;
 
 pub struct ConvertSnapshotEfSaveCRT {
     config: CrtConfig,
@@ -300,7 +301,7 @@ impl ConvertSnapshotEfSaveCRT {
         let eapi_page_hi = match self.config.eapi_buffer {
             EapiBuffer::Fixed(addr) => place_eapi_buffer(addr, ram_finder, "The chosen EAPI buffer")?,
             EapiBuffer::Screen => {
-                place_eapi_buffer(screen_addr, ram_finder, "The screen RAM")?
+                place_eapi_buffer(screen_addr + 0x0100, ram_finder, "The screen RAM")?
             }
             EapiBuffer::Auto => {
                 if let Some((alloc, _)) =
@@ -309,7 +310,7 @@ impl ConvertSnapshotEfSaveCRT {
                     (((alloc + 0xFF) & 0xFF00) >> 8) as u8
                 } else {
                     place_eapi_buffer(
-                        screen_addr,
+                        screen_addr + 0x0100,
                         ram_finder,
                         "No free RAM in $0900-$0FFF, and the screen RAM",
                     )?
@@ -317,12 +318,13 @@ impl ConvertSnapshotEfSaveCRT {
             }
         };
 
-        let is_using_screen = (eapi_page_hi as u16) << 8 == screen_addr;
+        let eapi_addr = (eapi_page_hi as u16) << 8;
+        let is_using_screen = eapi_addr >= screen_addr && eapi_addr < screen_addr + 1024;
         let stash_addr = if is_using_screen || self.config.force_stash {
             // Try to allocate a 1024-byte block in $C000-$CFFF first, then fall back to $0800-$7FFF.
-            if let Some((alloc, _)) = ram_finder.allocate_in_range(EAPI_BUFFER_LEN, 0xC000, 0xD000) {
+            if let Some((alloc, _)) = ram_finder.allocate_in_range(SCREEN_STASH_LEN, 0xC000, 0xD000) {
                 Some(alloc)
-            } else if let Some((alloc, _)) = ram_finder.allocate_in_range(EAPI_BUFFER_LEN, 0x0800, 0x8000) {
+            } else if let Some((alloc, _)) = ram_finder.allocate_in_range(SCREEN_STASH_LEN, 0x0800, 0x8000) {
                 Some(alloc)
             } else if self.config.force_stash {
                 return Err("Failed to force screen stashing: no free 1 KB block in $C000-$CFFF or $0800-$7FFF found".to_string());
