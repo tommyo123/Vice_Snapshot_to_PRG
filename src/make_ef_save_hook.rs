@@ -31,13 +31,37 @@ pub struct EfSaveHook {
     eapi_page_hi: u8,
     temp_filename_addr: u16,
     binary: Vec<u8>,
+    stash_address: Option<u16>,
+    screen_address: u16,
+    blank_screen: bool,
 }
 
 impl EfSaveHook {
     /// `blob_address`: where the trampoline is placed in C64 RAM.
     /// `eapi_page_hi`: high byte of the page-aligned 768-byte EAPI buffer.
     pub fn new(blob_address: u16, eapi_page_hi: u8) -> Self {
-        Self { blob_address, eapi_page_hi, temp_filename_addr: 0, binary: Vec::new() }
+        Self {
+            blob_address,
+            eapi_page_hi,
+            temp_filename_addr: 0,
+            binary: Vec::new(),
+            stash_address: None,
+            screen_address: 0,
+            blank_screen: false,
+        }
+    }
+
+    /// Set screen stashing addresses
+    pub fn with_stash(mut self, stash_address: u16, screen_address: u16) -> Self {
+        self.stash_address = Some(stash_address);
+        self.screen_address = screen_address;
+        self
+    }
+
+    /// Set screen blanking option
+    pub fn with_blank(mut self, blank_screen: bool) -> Self {
+        self.blank_screen = blank_screen;
+        self
     }
 
     /// Address to hook into the SAVE vector ($0332).
@@ -55,6 +79,79 @@ impl EfSaveHook {
     }
 
     fn generate_asm(&self, temp_addr: u16) -> String {
+        let (stash_call, stash_restore, stash_sub) = if let Some(stash) = self.stash_address {
+            (
+                "    JSR swap_to_stash\n",
+                "    JSR swap_from_stash\n",
+                format!(
+                    r#"
+swap_to_stash:
+    LDA #<${screen:04X}
+    STA $FB
+    LDA #>${screen:04X}
+    STA $FC
+    LDA #<${stash:04X}
+    STA $FD
+    LDA #>${stash:04X}
+    STA $FE
+    JMP copy_1k
+
+swap_from_stash:
+    LDA #<${stash:04X}
+    STA $FB
+    LDA #>${stash:04X}
+    STA $FC
+    LDA #<${screen:04X}
+    STA $FD
+    LDA #>${screen:04X}
+    STA $FE
+    ; fall through to copy_1k
+
+copy_1k:
+    LDX #$04
+    LDY #$00
+copy_loop_1k:
+    LDA ($FB),Y
+    STA ($FD),Y
+    INY
+    BNE copy_loop_1k
+    INC $FC
+    INC $FE
+    DEX
+    BNE copy_loop_1k
+    RTS
+"#,
+                    screen = self.screen_address,
+                    stash = stash
+                ),
+            )
+        } else {
+            ("", "", "".to_string())
+        };
+
+        let (blank_call, blank_restore, blank_sub, blank_var) = if self.blank_screen {
+            (
+                "    JSR do_blank\n",
+                "    JSR do_restore\n",
+                r#"
+do_blank:
+    LDA $D011
+    STA d011_save
+    AND #$EF
+    STA $D011
+    RTS
+
+do_restore:
+    LDA d011_save
+    STA $D011
+    RTS
+"#,
+                "d011_save:\n    .byte $00\n",
+            )
+        } else {
+            ("", "", "", "")
+        };
+
         format!(
             r#"*=${blob:04X}
 
@@ -76,7 +173,7 @@ save_tramp:
     STA save_end+1
     SEI
     JSR copy_filename_save
-    JSR bank_in
+{blank_call}{stash_call}    JSR bank_in
     JSR ${efs_init:04X}        ; EFS_init
     LDA #${eapi:02X}
     JSR ${efs_init_eapi:04X}   ; EFS_init_eapi
@@ -92,9 +189,11 @@ save_tramp:
     LDX save_end
     LDY save_end+1
     JSR ${efs_save:04X}        ; EFS_save
+    PHA
     PHP
     JSR bank_out
-    PLP
+{stash_restore}{blank_restore}    PLP
+    PLA
     CLI
     RTS
 
@@ -108,7 +207,7 @@ load_tramp:
     STA load_sa
     SEI
     JSR copy_filename
-    JSR bank_in
+{blank_call}{stash_call}    JSR bank_in
     JSR ${efs_init:04X}        ; EFS_init
     LDA #${eapi:02X}
     JSR ${efs_init_eapi:04X}   ; EFS_init_eapi
@@ -128,7 +227,7 @@ load_tramp:
     PHA
     PHP
     JSR bank_out
-    PLP
+{stash_restore}{blank_restore}    PLP
     PLA
     LDX end_lo
     LDY end_hi
@@ -193,6 +292,8 @@ cfs_done:
     RTS
 
 bank_in:
+    LDA $01
+    STA port_01_save
     LDA #$37
     STA $01
     LDA #$87           ; LED + 16K mode
@@ -204,10 +305,10 @@ bank_in:
 bank_out:
     LDA #$04           ; EXROM/GAME high = cartridge off
     STA $DE02
-    LDA #$37
+    LDA port_01_save
     STA $01
     RTS
-
+{stash_sub}{blank_sub}
 save_start:
     .byte $00
     .byte $00
@@ -228,7 +329,9 @@ end_lo:
     .byte $00
 end_hi:
     .byte $00
-"#,
+port_01_save:
+    .byte $00
+{blank_var}"#,
             blob = self.blob_address,
             efs_init = EFS_INIT,
             efs_init_eapi = EFS_INIT_EAPI,
@@ -242,6 +345,13 @@ end_hi:
             t1 = temp_addr + 1,
             t2 = temp_addr + 2,
             t3 = temp_addr + 3,
+            stash_call = stash_call,
+            stash_restore = stash_restore,
+            stash_sub = stash_sub,
+            blank_call = blank_call,
+            blank_restore = blank_restore,
+            blank_sub = blank_sub,
+            blank_var = blank_var,
         )
     }
 
@@ -322,5 +432,30 @@ mod tests {
         // SAVE vector -> save entry, LOAD vector -> load entry
         assert_eq!(ram[SAVE_VECTOR] as u16 | ((ram[SAVE_VECTOR + 1] as u16) << 8), 0x0334);
         assert_eq!(ram[LOAD_VECTOR] as u16 | ((ram[LOAD_VECTOR + 1] as u16) << 8), 0x0337);
+    }
+
+    #[test]
+    fn trampoline_with_stash_assembles() {
+        let mut hook = EfSaveHook::new(0x0334, 0xC0).with_stash(0x2000, 0x0400);
+        let bin = hook.generate_binary().expect("assembles with stash");
+        assert!(!bin.is_empty());
+        // Verify size is larger than without stashing
+        let mut hook_no_stash = EfSaveHook::new(0x0334, 0xC0);
+        let bin_no_stash = hook_no_stash.generate_binary().expect("assembles");
+        assert!(bin.len() > bin_no_stash.len());
+        // Verify that entry points still resolve correctly
+        assert_eq!(hook.save_entry(), 0x0334);
+        assert_eq!(hook.load_entry(), 0x0337);
+        assert_eq!(hook.temp_filename_addr(), 0x0334 + bin.len() as u16);
+    }
+
+    #[test]
+    fn trampoline_with_blank_assembles() {
+        let mut hook = EfSaveHook::new(0x0334, 0xC0).with_blank(true);
+        let bin = hook.generate_binary().expect("assembles with blank");
+        assert!(!bin.is_empty());
+        let mut hook_no_blank = EfSaveHook::new(0x0334, 0xC0);
+        let bin_no_blank = hook_no_blank.generate_binary().expect("assembles");
+        assert!(bin.len() > bin_no_blank.len());
     }
 }

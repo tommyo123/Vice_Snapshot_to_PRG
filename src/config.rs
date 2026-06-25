@@ -90,6 +90,10 @@ pub struct CrtConfig {
     pub rw_dir: Option<String>,
     /// EasyFlash SAVE: where the EAPI flash buffer goes in C64 RAM
     pub eapi_buffer: EapiBuffer,
+    /// EasyFlash SAVE: force screen stashing (fails conversion if no block found)
+    pub force_stash: bool,
+    /// EasyFlash SAVE: force screen blanking during LOAD/SAVE operations
+    pub force_blank: bool,
 }
 
 impl CrtConfig {
@@ -104,6 +108,8 @@ impl CrtConfig {
             patch_load_save: false,
             rw_dir: None,
             eapi_buffer: EapiBuffer::Auto,
+            force_stash: false,
+            force_blank: false,
         }
     }
 
@@ -116,6 +122,18 @@ impl CrtConfig {
     /// Set where the EAPI flash buffer is placed (EF SAVE).
     pub fn with_eapi_buffer(mut self, buf: EapiBuffer) -> Self {
         self.eapi_buffer = buf;
+        self
+    }
+
+    /// Set whether to force screen stashing (EF SAVE).
+    pub fn with_force_stash(mut self, force: bool) -> Self {
+        self.force_stash = force;
+        self
+    }
+
+    /// Set whether to force screen blanking (EF SAVE).
+    pub fn with_force_blank(mut self, blank: bool) -> Self {
+        self.force_blank = blank;
         self
     }
 

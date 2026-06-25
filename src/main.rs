@@ -295,7 +295,7 @@ fn main() {
     let mut crt_eapi_choice = menu::Choice::default()
         .with_pos(MARGIN + 110, crt_y)
         .with_size(200, 25);
-    crt_eapi_choice.add_choice("Auto (free RAM / screen)|Screen RAM|Custom address");
+    crt_eapi_choice.add_choice("Auto (free RAM or screen)|Screen RAM|Custom address");
     crt_eapi_choice.set_value(0);
     crt_eapi_choice.hide();
 
@@ -304,6 +304,22 @@ fn main() {
         .with_size(90, 25);
     crt_eapi_addr.set_value("$0900");
     crt_eapi_addr.hide();
+
+    crt_y += 30;
+
+    let mut crt_force_stash_check = CheckButton::default()
+        .with_pos(MARGIN, crt_y)
+        .with_size(200, 25)
+        .with_label("Force screen stash");
+    crt_force_stash_check.set_checked(false);
+    crt_force_stash_check.hide();
+
+    let mut crt_force_blank_check = CheckButton::default()
+        .with_pos(MARGIN + 220, crt_y)
+        .with_size(200, 25)
+        .with_label("Force screen blank");
+    crt_force_blank_check.set_checked(false);
+    crt_force_blank_check.hide();
 
     crt_tab.end();
     tabs.end();
@@ -377,6 +393,8 @@ fn main() {
     let crt_eapi_choice_rc = Rc::new(RefCell::new(crt_eapi_choice.clone()));
     let crt_eapi_addr_rc = Rc::new(RefCell::new(crt_eapi_addr.clone()));
     let crt_eapi_label_rc = Rc::new(RefCell::new(crt_eapi_label.clone()));
+    let crt_force_stash_check_rc = Rc::new(RefCell::new(crt_force_stash_check.clone()));
+    let crt_force_blank_check_rc = Rc::new(RefCell::new(crt_force_blank_check.clone()));
     let status_buffer_rc = Rc::new(RefCell::new(status_buffer));
     let tabs_rc = Rc::new(RefCell::new(tabs.clone()));
 
@@ -402,6 +420,8 @@ fn main() {
         let eapi_label = crt_eapi_label_rc.clone();
         let eapi_choice = crt_eapi_choice_rc.clone();
         let eapi_addr = crt_eapi_addr_rc.clone();
+        let force_stash_check = crt_force_stash_check_rc.clone();
+        let force_blank_check = crt_force_blank_check_rc.clone();
 
         crt_type_choice.clone().set_callback(move |choice| {
             let is_magic_desk = choice.value() == 1;
@@ -415,6 +435,8 @@ fn main() {
                 eapi_label.borrow_mut().show();
                 eapi_choice.borrow_mut().show();
                 eapi_addr.borrow_mut().show();
+                force_stash_check.borrow_mut().show();
+                force_blank_check.borrow_mut().show();
             } else {
                 rw_label.borrow_mut().hide();
                 rw_field.borrow_mut().hide();
@@ -422,6 +444,8 @@ fn main() {
                 eapi_label.borrow_mut().hide();
                 eapi_choice.borrow_mut().hide();
                 eapi_addr.borrow_mut().hide();
+                force_stash_check.borrow_mut().hide();
+                force_blank_check.borrow_mut().hide();
             }
 
             if is_ef_save {
@@ -447,6 +471,8 @@ fn main() {
                 } else {
                     eapi_addr.borrow_mut().deactivate();
                 }
+                force_stash_check.borrow_mut().activate();
+                force_blank_check.borrow_mut().activate();
             } else {
                 hook_check.borrow_mut().activate(); // user controls hooking
                 let hooked = hook_check.borrow().is_checked();
@@ -459,6 +485,8 @@ fn main() {
                         addr_field.borrow_mut().activate();
                     }
                 }
+                force_stash_check.borrow_mut().deactivate();
+                force_blank_check.borrow_mut().deactivate();
             }
             app::redraw();
         });
@@ -738,6 +766,8 @@ fn main() {
         let crt_rw = crt_rw_field_rc.clone();
         let crt_eapi_choice = crt_eapi_choice_rc.clone();
         let crt_eapi_addr = crt_eapi_addr_rc.clone();
+        let crt_force_stash = crt_force_stash_check_rc.clone();
+        let crt_force_blank = crt_force_blank_check_rc.clone();
         let status_buffer = status_buffer_rc.clone();
         let tabs = tabs_rc.clone();
         let extra_blocks = extra_ram_blocks_rc.clone();
@@ -765,6 +795,8 @@ fn main() {
                 let rw_dir = crt_rw.borrow().value();
                 let eapi_mode = crt_eapi_choice.borrow().value();
                 let eapi_addr_text = crt_eapi_addr.borrow().value();
+                let force_stash = crt_force_stash.borrow().is_checked();
+                let force_blank = crt_force_blank.borrow().is_checked();
                 let cart_type_name = match cart_type {
                     1 => "Magic Desk",
                     2 => "EasyFlash SAVE",
@@ -867,6 +899,8 @@ fn main() {
                                 config.rw_dir = Some(rw_dir.clone());
                             }
                             config.patch_load_save = true;
+                            config.force_stash = force_stash;
+                            config.force_blank = force_blank;
                             config.auto_location = auto_location;
                             if !auto_location {
                                 if let Some(addr) = parse_addr(&addr_text) {
@@ -899,15 +933,15 @@ fn main() {
                         let conversion_result = if is_ef_save {
                             let converter =
                                 ConvertSnapshotEfSaveCRT::with_extra_blocks(config, current_blocks);
-                            converter.convert(&input_path, &output_path)
+                            converter.convert(&input_path, &output_path).map(|(t, s)| Some((t, s)))
                         } else if is_magic_desk {
                             let converter =
                                 ConvertSnapshotMagicDeskCRT::with_extra_blocks(config, current_blocks);
-                            converter.convert(&input_path, &output_path)
+                            converter.convert(&input_path, &output_path).map(|_| None)
                         } else {
                             let converter =
                                 ConvertSnapshotCRT::with_extra_blocks(config, current_blocks);
-                            converter.convert(&input_path, &output_path)
+                            converter.convert(&input_path, &output_path).map(|_| None)
                         };
 
                         let _ = cleanup_work_dir(&work_path);
@@ -915,13 +949,27 @@ fn main() {
                     });
 
                     match result {
-                        Ok(()) => {
+                        Ok(addr_info) => {
                             // Success - clear extra blocks
                             extra_blocks.borrow_mut().clear();
-                            let success_msg = format!(
+                            let mut success_msg = format!(
                                 "Success!\n\nSnapshot successfully converted to {} CRT:\n{}",
                                 cart_type_name, output_path
                             );
+                            if let Some((tramp, stash)) = addr_info {
+                                success_msg.push_str(&format!(
+                                    "\n\nSAVE/LOAD trampoline address: ${:04X}",
+                                    tramp
+                                ));
+                                if let Some(st) = stash {
+                                    success_msg.push_str(&format!(
+                                        "\nScreen RAM stash address:     ${:04X}",
+                                        st
+                                    ));
+                                } else {
+                                    success_msg.push_str("\nScreen RAM stash address:     None");
+                                }
+                            }
                             status_buffer.borrow_mut().set_text(&success_msg);
                             break;
                         }

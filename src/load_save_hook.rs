@@ -77,7 +77,7 @@ load_trampoline:
     STA $93
     SEI
     LDA $01
-    STA restore_memmap+1
+    STA port_01_save
 
     ; Copy filename to temp area
     LDY $B7
@@ -103,7 +103,7 @@ no_filename:
     PHP
     LDA #$04
     STA $DE02
-    LDA #$37
+    LDA port_01_save
     STA $01
     PLP
     PLA
@@ -178,6 +178,9 @@ copy_done:
 
 restore_memmap:
     RTS
+
+port_01_save:
+    .byte $00
 "#,
             self.trampoline_address, temp_addr
         )

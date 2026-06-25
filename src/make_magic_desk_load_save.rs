@@ -93,6 +93,8 @@ impl MagicDeskLoadSaveHook {
 load_trampoline:
     STA $93              ; save LOAD/VERIFY flag (KERNAL semantics)
     SEI
+    LDA $01
+    STA port_01_save
 
     ; Copy requested filename to temp area (readable while cart is banked in)
     LDY $B7
@@ -118,7 +120,7 @@ no_filename:
     PHP
     LDA #$80
     STA $DE00            ; bank cartridge OUT (bit 7 = 1)
-    LDA #$37
+    LDA port_01_save
     STA $01
     PLP
     PLA
@@ -185,6 +187,9 @@ copy_done:
     LDA #${dir_bank:02X}
     STA $DE00            ; back to directory bank so handler page stays valid
     RTS
+
+port_01_save:
+    .byte $00
 "#,
             trampoline = self.trampoline_address,
             temp = temp_addr,

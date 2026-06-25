@@ -60,7 +60,7 @@ impl ConvertSnapshotEfSaveCRT {
         Self { config, extra_ram_blocks }
     }
 
-    pub fn convert(&self, input_path: &str, output_path: &str) -> Result<(), String> {
+    pub fn convert(&self, input_path: &str, output_path: &str) -> Result<(u16, Option<u16>), String> {
         if std::path::Path::new(output_path).exists() {
             return Err(format!(
                 "Output file already exists:\n{}\n\nPlease choose a different filename.",
@@ -90,13 +90,18 @@ impl ConvertSnapshotEfSaveCRT {
         // and the LOAD/SAVE trampoline, then hook the vectors.
         let mut ram_finder = FindRam::with_extra_blocks(&ram, &self.extra_ram_blocks);
 
+        let screen_addr = screen_address(&snap);
+
         // The EAPI flash write/erase code executes from this buffer in Ultimax
         // mode, so it must live in $0000-$0FFF (page-aligned, ~1 KB).
-        let eapi_page_hi = self.resolve_eapi_buffer(&snap, &mut ram_finder)?;
+        let (eapi_page_hi, stash_addr) = self.resolve_eapi_buffer(&snap, &mut ram_finder, screen_addr)?;
 
         // The LOAD/SAVE trampoline goes at a caller-chosen address if given
         // (e.g. low stack), otherwise auto-placed in free RAM. Measure it first.
-        let mut hook = EfSaveHook::new(0, eapi_page_hi);
+        let mut hook = EfSaveHook::new(0, eapi_page_hi).with_blank(self.config.force_blank);
+        if let Some(stash) = stash_addr {
+            hook = hook.with_stash(stash, screen_addr);
+        }
         hook.generate_binary()?;
         let tramp_len = hook.reserved_len() as u16;
         let blob_addr = match self.config.trampoline_address {
@@ -122,7 +127,10 @@ impl ConvertSnapshotEfSaveCRT {
             }
         };
 
-        let mut hook = EfSaveHook::new(blob_addr, eapi_page_hi);
+        let mut hook = EfSaveHook::new(blob_addr, eapi_page_hi).with_blank(self.config.force_blank);
+        if let Some(stash) = stash_addr {
+            hook = hook.with_stash(stash, screen_addr);
+        }
         hook.hook(&mut ram[..]).map_err(|e| format!("Failed to hook SAVE/LOAD: {}", e))?;
 
         // Patch restore code into RAM (uses the already-reduced free list).
@@ -265,10 +273,12 @@ impl ConvertSnapshotEfSaveCRT {
         area1_image.extend_from_slice(&area1.files);
         place_hirom_stream(&mut crt, FIRST_RW_BANK as usize, &area1_image)?;
 
-        crt.make_crt(output_path)
+        crt.make_crt(output_path)?;
+        Ok((blob_addr, stash_addr))
     }
 
-    /// Decide where the EAPI flash buffer lives and return its page high byte.
+    /// Decide where the EAPI flash buffer lives and return its page high byte
+    /// and an optional screen stashing address.
     ///
     /// The EAPI's write/erase code runs from this buffer in Ultimax mode, so it
     /// must be page-aligned in `$0000-$0FFF`. Default ([`EapiBuffer::Auto`]) is
@@ -277,28 +287,45 @@ impl ConvertSnapshotEfSaveCRT {
     /// program). `Screen`/`Fixed` force those choices.
     fn resolve_eapi_buffer(
         &self,
-        snap: &C64Snapshot,
+        _snap: &C64Snapshot,
         ram_finder: &mut FindRam,
-    ) -> Result<u8, String> {
-        match self.config.eapi_buffer {
-            EapiBuffer::Fixed(addr) => place_eapi_buffer(addr, ram_finder, "The chosen EAPI buffer"),
+        screen_addr: u16,
+    ) -> Result<(u8, Option<u16>), String> {
+        let eapi_page_hi = match self.config.eapi_buffer {
+            EapiBuffer::Fixed(addr) => place_eapi_buffer(addr, ram_finder, "The chosen EAPI buffer")?,
             EapiBuffer::Screen => {
-                place_eapi_buffer(screen_address(snap), ram_finder, "The screen RAM")
+                place_eapi_buffer(screen_addr, ram_finder, "The screen RAM")?
             }
             EapiBuffer::Auto => {
                 if let Some((alloc, _)) =
                     ram_finder.allocate_in_range(EAPI_BUFFER_LEN, RAM_FLOOR, EAPI_BUFFER_CEIL)
                 {
-                    Ok((((alloc + 0xFF) & 0xFF00) >> 8) as u8)
+                    (((alloc + 0xFF) & 0xFF00) >> 8) as u8
                 } else {
                     place_eapi_buffer(
-                        screen_address(snap),
+                        screen_addr,
                         ram_finder,
                         "No free RAM in $0900-$0FFF, and the screen RAM",
-                    )
+                    )?
                 }
             }
-        }
+        };
+
+        let is_using_screen = (eapi_page_hi as u16) << 8 == screen_addr;
+        let stash_addr = if is_using_screen || self.config.force_stash {
+            // Try to allocate a 1024-byte block in $0800-$7FFF.
+            if let Some((alloc, _)) = ram_finder.allocate_in_range(EAPI_BUFFER_LEN, 0x0800, 0x8000) {
+                Some(alloc)
+            } else if self.config.force_stash {
+                return Err("Failed to force screen stashing: no free 1 KB block in $0800-$7FFF found".to_string());
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok((eapi_page_hi, stash_addr))
     }
 }
 

@@ -33,6 +33,8 @@ struct CliArgs {
     hook_addr: Option<u16>,
     trampoline: Option<u16>,
     eapi_buffer: Option<EapiBuffer>,
+    force_stash: bool,
+    force_blank: bool,
 }
 
 fn main() {
@@ -119,6 +121,14 @@ fn main() {
         eprintln!("Warning: --eapi-buffer is only used with --ef-save format, ignoring");
         eprintln!();
     }
+    if cli_args.force_stash && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --force-stash is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
+    if cli_args.force_blank && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --force-blank is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
 
     // Validate include / rw directories exist
     for dir in [cli_args.include_dir.as_ref(), cli_args.rw_dir.as_ref()]
@@ -201,6 +211,8 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut hook_addr: Option<u16> = None;
     let mut trampoline: Option<u16> = None;
     let mut eapi_buffer: Option<EapiBuffer> = None;
+    let mut force_stash = false;
+    let mut force_blank = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -271,6 +283,12 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 }
                 eapi_buffer = Some(parse_eapi_buffer(&args[i])?);
             }
+            "--force-stash" => {
+                force_stash = true;
+            }
+            "--force-blank" => {
+                force_blank = true;
+            }
             "--hook-addr" => {
                 i += 1;
                 if i >= args.len() {
@@ -317,6 +335,8 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         hook_addr,
         trampoline,
         eapi_buffer,
+        force_stash,
+        force_blank,
     })
 }
 
@@ -424,13 +444,28 @@ fn convert_ef_save_crt(cli_args: &CliArgs) -> Result<(), String> {
     if let Some(buf) = cli_args.eapi_buffer {
         config = config.with_eapi_buffer(buf);
     }
+    if cli_args.force_stash {
+        config = config.with_force_stash(true);
+    }
+    if cli_args.force_blank {
+        config = config.with_force_blank(true);
+    }
 
     let work_path = config.base_config.work_path.clone();
     let converter = ConvertSnapshotEfSaveCRT::new(config);
     let result = converter.convert(&cli_args.input_path, &cli_args.output_path);
 
     let _ = cleanup_work_dir(&work_path);
-    result
+    let (tramp_addr, stash_addr) = result?;
+
+    println!("SAVE/LOAD trampoline address: ${:04X}", tramp_addr);
+    if let Some(stash) = stash_addr {
+        println!("Screen RAM stash address:     ${:04X}", stash);
+    } else {
+        println!("Screen RAM stash address:     None");
+    }
+
+    Ok(())
 }
 
 fn cleanup_work_dir(work_path: &Path) -> Result<(), String> {
@@ -481,6 +516,8 @@ fn print_usage(program_name: &str) {
     println!("                       free RAM $0900-$0FFF, else the screen), screen (force the");
     println!("                       program's screen RAM, clobbered during ops), or a hex addr");
     println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash only, overrides auto)");
+    println!("  --force-stash        Force screen RAM stashing/restore (--ef-save only, fails if no free 1 KB block)");
+    println!("  --force-blank        Force screen blanking during LOAD/SAVE operations (--ef-save only)");
     println!("  -h, --help           Show this help message");
     println!();
     println!("EXAMPLES:");
