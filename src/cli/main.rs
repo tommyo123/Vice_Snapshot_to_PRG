@@ -13,12 +13,14 @@ use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
 use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
+use vice_snapshot_to_prg_converter::convert_snapshot_ef_save_crt::ConvertSnapshotEfSaveCRT;
 
 #[derive(Debug, PartialEq)]
 enum OutputFormat {
     Prg,
     Crt,
     MagicDeskCrt,
+    EfSaveCrt,
 }
 
 struct CliArgs {
@@ -67,7 +69,9 @@ fn main() {
             eprintln!("Warning: Output file does not have .prg extension");
             eprintln!();
         }
-        OutputFormat::Crt | OutputFormat::MagicDeskCrt if !output_lower.ends_with(".crt") => {
+        OutputFormat::Crt | OutputFormat::MagicDeskCrt | OutputFormat::EfSaveCrt
+            if !output_lower.ends_with(".crt") =>
+        {
             eprintln!("Warning: Output file does not have .crt extension");
             eprintln!();
         }
@@ -125,6 +129,7 @@ fn main() {
         OutputFormat::Prg => "PRG",
         OutputFormat::Crt => "EasyFlash CRT",
         OutputFormat::MagicDeskCrt => "Magic Desk CRT",
+        OutputFormat::EfSaveCrt => "EasyFlash SAVE CRT",
     };
 
     println!("VICE Snapshot to PRG/CRT Converter v{} (CLI)", VERSION);
@@ -147,6 +152,7 @@ fn main() {
         OutputFormat::Prg => convert_prg(&cli_args),
         OutputFormat::Crt => convert_crt(&cli_args),
         OutputFormat::MagicDeskCrt => convert_magic_desk_crt(&cli_args),
+        OutputFormat::EfSaveCrt => convert_ef_save_crt(&cli_args),
     };
 
     match result {
@@ -196,6 +202,12 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                     return Err("Cannot specify multiple format flags".to_string());
                 }
                 format = Some(OutputFormat::MagicDeskCrt);
+            }
+            "--ef-save" => {
+                if format.is_some() {
+                    return Err("Cannot specify multiple format flags".to_string());
+                }
+                format = Some(OutputFormat::EfSaveCrt);
             }
             "--name" => {
                 i += 1;
@@ -317,6 +329,21 @@ fn convert_magic_desk_crt(cli_args: &CliArgs) -> Result<(), String> {
     result
 }
 
+fn convert_ef_save_crt(cli_args: &CliArgs) -> Result<(), String> {
+    let mut config = CrtConfig::auto().map_err(|e| format!("Failed to initialize: {}", e))?;
+
+    if let Some(ref name) = cli_args.cartridge_name {
+        config = config.with_cartridge_name(name);
+    }
+
+    let work_path = config.base_config.work_path.clone();
+    let converter = ConvertSnapshotEfSaveCRT::new(config);
+    let result = converter.convert(&cli_args.input_path, &cli_args.output_path);
+
+    let _ = cleanup_work_dir(&work_path);
+    result
+}
+
 fn cleanup_work_dir(work_path: &Path) -> Result<(), String> {
     if work_path.exists() {
         std::fs::remove_dir_all(work_path)
@@ -353,6 +380,7 @@ fn print_usage(program_name: &str) {
     println!("  --prg                Force PRG format output");
     println!("  --crt                Force EasyFlash CRT format output");
     println!("  --magic-desk         Force Magic Desk CRT format output");
+    println!("  --ef-save            EasyFlash CRT with persistent SAVE/LOAD (libefs flash FS)");
     println!("  --name <name>        Cartridge name (CRT only, max 32 chars)");
     println!("  --include-dir <dir>  Include PRG files from directory (EasyFlash or Magic Desk)");
     println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash only, overrides auto)");

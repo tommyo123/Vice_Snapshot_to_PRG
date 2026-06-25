@@ -193,6 +193,63 @@ impl FindRam {
         cleared
     }
 
+    /// Allocate `requested_count` bytes from a block whose allocated range lies
+    /// entirely within [`min`, `limit`). Used to place the EasyFlash SAVE
+    /// trampoline and EAPI buffer in RAM that is both (a) not in the $8000-$BFFF
+    /// cartridge window and (b) above the screen / low-RAM hazards ($0200-$07FF),
+    /// which can look "free" (the $20-filled screen) but are actually in use.
+    ///
+    /// Returns Some((address, value)) on success, None if no suitable block.
+    pub fn allocate_in_range(&mut self, requested_count: u16, min: u16, limit: u16) -> Option<(u16, u8)> {
+        if requested_count == 0 {
+            return None;
+        }
+        let req = requested_count as u32;
+        let min = min as u32;
+        let limit = limit as u32;
+
+        // A block may start below `min` and/or extend past `limit`; we carve the
+        // requested span from the in-range portion (max(addr,min)..min(end,limit)).
+        let usable = |b: &RamBlock| -> Option<(u32, u32)> {
+            let start = (b.address as u32).max(min);
+            let end = (b.address as u32 + b.count as u32).min(limit);
+            if end >= start + req { Some((start, end)) } else { None }
+        };
+
+        let index = self
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| usable(b).is_some())
+            .min_by_key(|(_, b)| b.count)
+            .map(|(i, _)| i)?;
+
+        let block = self.blocks[index].clone();
+        let (alloc_start, _) = usable(&block).unwrap();
+        let value = block.value;
+        let block_start = block.address as u32;
+        let block_end = block_start + block.count as u32;
+
+        // Replace the block with its left and right remainders.
+        self.blocks.remove(index);
+        if alloc_start > block_start {
+            self.blocks.push(RamBlock {
+                address: block_start as u16,
+                value,
+                count: (alloc_start - block_start) as u16,
+            });
+        }
+        let right_start = alloc_start + req;
+        if block_end > right_start {
+            self.blocks.push(RamBlock {
+                address: right_start as u16,
+                value,
+                count: (block_end - right_start) as u16,
+            });
+        }
+        Some((alloc_start as u16, value))
+    }
+
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
