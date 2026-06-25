@@ -16,7 +16,7 @@
 // Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
-use crate::config::CrtConfig;
+use crate::config::{CrtConfig, EapiBuffer};
 use crate::crt_builder::{CRTBuilder, CartridgeType, BANK_SIZE_8K};
 use crate::ef_save::{self, EfsConfig};
 use crate::make_efs_image::{build_efs_area, read_prg_dir, DIVISOR_8K, EFS_DIR_SIZE};
@@ -35,11 +35,16 @@ const RESTORE_START_BANK: usize = 1;
 /// (where libefs executes) means a defragment sector-erase never blanks the
 /// running code's chip. See [`EfsConfig::with_top_rw_sector`].
 const FIRST_RW_BANK: u8 = 48;
-/// RAM the trampoline + EAPI buffer must stay below (cart shadows $8000-$BFFF).
+/// RAM the trampoline must stay below (cart shadows $8000-$BFFF).
 const RAM_LIMIT: u16 = 0x8000;
 /// ...and above (avoid zero page, stack, BASIC input buffer, cassette buffer and
 /// especially the screen $0400-$07FF, which is a $20-filled "free-looking" run).
 const RAM_FLOOR: u16 = 0x0900;
+/// The EAPI flash buffer must be reachable in Ultimax mode, i.e. in $0000-$0FFF.
+/// Auto placement searches $0900-$0FFF (above the default screen); the screen
+/// fallback uses $0400-$0C00. The buffer is a page-aligned ~1 KB.
+const EAPI_BUFFER_CEIL: u16 = 0x1000;
+const EAPI_BUFFER_LEN: u16 = 1024;
 
 pub struct ConvertSnapshotEfSaveCRT {
     config: CrtConfig,
@@ -85,11 +90,9 @@ impl ConvertSnapshotEfSaveCRT {
         // and the LOAD/SAVE trampoline, then hook the vectors.
         let mut ram_finder = FindRam::with_extra_blocks(&ram, &self.extra_ram_blocks);
 
-        let (eapi_alloc, _) = ram_finder
-            .allocate_in_range(1024, RAM_FLOOR, RAM_LIMIT)
-            .ok_or("Not enough free RAM for the EAPI buffer (need a clean snapshot)")?;
-        let eapi_page = (eapi_alloc + 0xFF) & 0xFF00; // page-align upward
-        let eapi_page_hi = (eapi_page >> 8) as u8;
+        // The EAPI flash write/erase code executes from this buffer in Ultimax
+        // mode, so it must live in $0000-$0FFF (page-aligned, ~1 KB).
+        let eapi_page_hi = self.resolve_eapi_buffer(&snap, &mut ram_finder)?;
 
         // The LOAD/SAVE trampoline goes at a caller-chosen address if given
         // (e.g. low stack), otherwise auto-placed in free RAM. Measure it first.
@@ -264,6 +267,65 @@ impl ConvertSnapshotEfSaveCRT {
 
         crt.make_crt(output_path)
     }
+
+    /// Decide where the EAPI flash buffer lives and return its page high byte.
+    ///
+    /// The EAPI's write/erase code runs from this buffer in Ultimax mode, so it
+    /// must be page-aligned in `$0000-$0FFF`. Default ([`EapiBuffer::Auto`]) is
+    /// free RAM in `$0900-$0FFF`; if there is none it falls back to the running
+    /// program's screen RAM (clobbered during each LOAD/SAVE, then redrawn by the
+    /// program). `Screen`/`Fixed` force those choices.
+    fn resolve_eapi_buffer(
+        &self,
+        snap: &C64Snapshot,
+        ram_finder: &mut FindRam,
+    ) -> Result<u8, String> {
+        match self.config.eapi_buffer {
+            EapiBuffer::Fixed(addr) => place_eapi_buffer(addr, ram_finder, "The chosen EAPI buffer"),
+            EapiBuffer::Screen => {
+                place_eapi_buffer(screen_address(snap), ram_finder, "The screen RAM")
+            }
+            EapiBuffer::Auto => {
+                if let Some((alloc, _)) =
+                    ram_finder.allocate_in_range(EAPI_BUFFER_LEN, RAM_FLOOR, EAPI_BUFFER_CEIL)
+                {
+                    Ok((((alloc + 0xFF) & 0xFF00) >> 8) as u8)
+                } else {
+                    place_eapi_buffer(
+                        screen_address(snap),
+                        ram_finder,
+                        "No free RAM in $0900-$0FFF, and the screen RAM",
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// Address of the running program's screen matrix, from the snapshot's VIC bank
+/// (CIA2 port A) and video-matrix bits (VIC `$D018`).
+fn screen_address(snap: &C64Snapshot) -> u16 {
+    let pra = snap.cia2.ora; // CIA2 port A drives the VIC 16K bank (inverted)
+    let vic_bank = ((!pra) & 0x03) as u16 * 0x4000;
+    let matrix = (((snap.vic.registers[0x18] >> 4) & 0x0F) as u16) * 0x0400;
+    vic_bank + matrix
+}
+
+/// Validate that `addr` can hold the page-aligned EAPI buffer (must be reachable
+/// in Ultimax mode and clear of the zero page/stack/vectors), then reserve it.
+fn place_eapi_buffer(addr: u16, ram_finder: &mut FindRam, what: &str) -> Result<u8, String> {
+    if addr & 0x00FF != 0
+        || addr < 0x0400
+        || addr as usize + EAPI_BUFFER_LEN as usize > EAPI_BUFFER_CEIL as usize
+    {
+        return Err(format!(
+            "{} (${:04X}) can't hold the EAPI flash buffer: it must be a page-aligned \
+             address in $0400-$0C00 (VIC bank 0), reachable in Ultimax mode.",
+            what, addr
+        ));
+    }
+    ram_finder.reserve(addr, EAPI_BUFFER_LEN);
+    Ok((addr >> 8) as u8)
 }
 
 /// Write a byte stream into LOROM banks starting at (`bank`, `offset`), flowing

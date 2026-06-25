@@ -155,6 +155,7 @@ vice-snapshot-to-prg-converter-cli --ef-save --include-dir ./ro --rw-dir ./defau
 - `--include-dir <dir>` – Embed PRG files from directory (EasyFlash, Magic Desk, or read-only area of `--ef-save`)
 - `--rw-dir <dir>` – Seed the rewritable area with default files (`--ef-save` only)
 - `--trampoline <hexaddr>` – Force the LOAD/SAVE trampoline location (`--ef-save` only; default: auto-placed in free RAM)
+- `--eapi-buffer <auto|screen|hexaddr>` – Flash-driver buffer placement (`--ef-save` only; default: auto, falls back to screen RAM)
 - `--hook-addr <hex>` – Override LOAD/SAVE hook address (EasyFlash only; Magic Desk uses a fixed trampoline)
 
 Output files are overwritten without prompting.
@@ -176,11 +177,16 @@ KERNAL `LOAD`/`SAVE` vectors are hooked, so the program uses ordinary `LOAD"NAME
 - **Garbage collection is automatic**: the rewritable area is two ping-pong halves; when one fills
   with live + invalidated files, libefs copies the live files to the other half and erases the full
   sector during a `SAVE`. Saving keeps working indefinitely with no data loss.
-- **C64 RAM use**: the running engine needs a little free RAM below `$8000` — ~300 bytes for the
-  LOAD/SAVE trampoline plus a page-aligned ~1 KB buffer for the flash driver (the AM29F040 EAPI must
-  run from RAM during a write). Both are placed automatically in free RAM. `--trampoline <hexaddr>`
-  forces the trampoline to a specific address if a game leaves no usable gap where it lands by
-  default (`tape`/`stack` are accepted as names but are too small for the ~300-byte trampoline).
+- **C64 RAM use**: the running engine needs a little free RAM — ~300 bytes (below `$8000`) for the
+  LOAD/SAVE trampoline plus a page-aligned ~1 KB buffer in `$0000-$0FFF` for the flash driver (the
+  AM29F040 EAPI must run from RAM, reachable in Ultimax mode, during a write). Both are placed
+  automatically in free RAM.
+  - `--trampoline <hexaddr>` forces the trampoline location if a game leaves no usable gap where it
+    lands by default (`tape`/`stack` are accepted names but are too small for the ~300-byte trampoline).
+  - `--eapi-buffer <auto|screen|hexaddr>` controls the flash buffer. Default `auto` uses free RAM in
+    `$0900-$0FFF` and, if a game leaves none, **falls back to the screen RAM** — only clobbered during
+    the LOAD/SAVE and redrawn by the program afterward, so even a RAM-full game can save. `screen`
+    forces it; a hex address must be page-aligned in `$0400-$0C00` (VIC bank 0).
 - Run VICE with **`-easyflashcrtwrite`** to persist flash changes back to the `.crt` on a clean exit.
 
 ### GUI

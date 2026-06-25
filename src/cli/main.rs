@@ -9,7 +9,7 @@ use std::env;
 use std::path::Path;
 use std::process;
 
-use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION};
+use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, EapiBuffer, VERSION};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
 use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
@@ -32,6 +32,7 @@ struct CliArgs {
     rw_dir: Option<String>,
     hook_addr: Option<u16>,
     trampoline: Option<u16>,
+    eapi_buffer: Option<EapiBuffer>,
 }
 
 fn main() {
@@ -112,6 +113,10 @@ fn main() {
     }
     if cli_args.trampoline.is_some() && cli_args.format != OutputFormat::EfSaveCrt {
         eprintln!("Warning: --trampoline is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
+    if cli_args.eapi_buffer.is_some() && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --eapi-buffer is only used with --ef-save format, ignoring");
         eprintln!();
     }
 
@@ -195,6 +200,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut rw_dir: Option<String> = None;
     let mut hook_addr: Option<u16> = None;
     let mut trampoline: Option<u16> = None;
+    let mut eapi_buffer: Option<EapiBuffer> = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -258,6 +264,13 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 }
                 trampoline = Some(parse_trampoline(&args[i])?);
             }
+            "--eapi-buffer" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--eapi-buffer requires auto|screen|<hex address>".to_string());
+                }
+                eapi_buffer = Some(parse_eapi_buffer(&args[i])?);
+            }
             "--hook-addr" => {
                 i += 1;
                 if i >= args.len() {
@@ -303,6 +316,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         rw_dir,
         hook_addr,
         trampoline,
+        eapi_buffer,
     })
 }
 
@@ -317,6 +331,21 @@ fn parse_trampoline(s: &str) -> Result<u16, String> {
             let h = s.trim_start_matches('$').trim_start_matches("0x");
             u16::from_str_radix(h, 16)
                 .map_err(|_| format!("Invalid --trampoline value: {} (use tape|stack|<hex>)", s))
+        }
+    }
+}
+
+/// Parse an `--eapi-buffer` value: `auto` (free low RAM, else the screen),
+/// `screen` (force the program's screen RAM), or an explicit hex address.
+fn parse_eapi_buffer(s: &str) -> Result<EapiBuffer, String> {
+    match s.to_lowercase().as_str() {
+        "auto" => Ok(EapiBuffer::Auto),
+        "screen" => Ok(EapiBuffer::Screen),
+        _ => {
+            let h = s.trim_start_matches('$').trim_start_matches("0x");
+            u16::from_str_radix(h, 16)
+                .map(EapiBuffer::Fixed)
+                .map_err(|_| format!("Invalid --eapi-buffer value: {} (use auto|screen|<hex>)", s))
         }
     }
 }
@@ -392,6 +421,9 @@ fn convert_ef_save_crt(cli_args: &CliArgs) -> Result<(), String> {
     if let Some(addr) = cli_args.trampoline {
         config = config.with_trampoline_address(addr);
     }
+    if let Some(buf) = cli_args.eapi_buffer {
+        config = config.with_eapi_buffer(buf);
+    }
 
     let work_path = config.base_config.work_path.clone();
     let converter = ConvertSnapshotEfSaveCRT::new(config);
@@ -445,6 +477,9 @@ fn print_usage(program_name: &str) {
     println!("                       address, or tape ($033C) / stack ($0100). Default: auto");
     println!("                       (free RAM). The trampoline is ~300 bytes, so tape/stack");
     println!("                       are too small; use a hex address of a large free region");
+    println!("  --eapi-buffer <loc>  Flash-driver buffer (--ef-save only): auto (default;");
+    println!("                       free RAM $0900-$0FFF, else the screen), screen (force the");
+    println!("                       program's screen RAM, clobbered during ops), or a hex addr");
     println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash only, overrides auto)");
     println!("  -h, --help           Show this help message");
     println!();

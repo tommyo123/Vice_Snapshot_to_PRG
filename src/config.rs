@@ -58,6 +58,19 @@ impl Default for Config {
     }
 }
 
+/// Where the EAPI flash write/erase buffer (~1 KB, page-aligned) is placed in
+/// C64 RAM. It must be reachable in Ultimax mode (`$0000-$0FFF`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EapiBuffer {
+    /// Find free RAM in `$0900-$0FFF`; if none, fall back to the screen.
+    Auto,
+    /// Use the running program's current screen RAM (clobbered during the op;
+    /// the program redraws afterward). Needs the screen in VIC bank 0, `$0400-$0C00`.
+    Screen,
+    /// Explicit page-aligned address in `$0400-$0C00`.
+    Fixed(u16),
+}
+
 /// Configuration for CRT (EasyFlash / Magic Desk cartridge) conversion
 #[derive(Clone)]
 pub struct CrtConfig {
@@ -75,6 +88,8 @@ pub struct CrtConfig {
     pub patch_load_save: bool,
     /// EasyFlash SAVE: directory of default files seeded into the rewritable area
     pub rw_dir: Option<String>,
+    /// EasyFlash SAVE: where the EAPI flash buffer goes in C64 RAM
+    pub eapi_buffer: EapiBuffer,
 }
 
 impl CrtConfig {
@@ -88,12 +103,19 @@ impl CrtConfig {
             cartridge_name: None,
             patch_load_save: false,
             rw_dir: None,
+            eapi_buffer: EapiBuffer::Auto,
         }
     }
 
     /// Set the directory of default files for the rewritable area (EF SAVE).
     pub fn with_rw_dir(mut self, dir: &str) -> Self {
         self.rw_dir = Some(dir.to_string());
+        self
+    }
+
+    /// Set where the EAPI flash buffer is placed (EF SAVE).
+    pub fn with_eapi_buffer(mut self, buf: EapiBuffer) -> Self {
+        self.eapi_buffer = buf;
         self
     }
 
