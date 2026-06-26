@@ -26,3 +26,11 @@ pub mod make_romh_asm;
 pub mod convert_snapshot_magic_desk_crt;
 pub mod make_magic_desk_boot_asm;
 pub mod make_magic_desk_crt_asm;
+pub mod make_magic_desk_load_save;
+
+// EasyFlash SAVE (libefs integration)
+pub mod ef_save;
+pub mod make_ef_save_hook;
+pub mod make_ef_save_boot_asm;
+pub mod make_efs_image;
+pub mod convert_snapshot_ef_save_crt;

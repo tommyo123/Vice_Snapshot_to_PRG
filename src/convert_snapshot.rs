@@ -62,6 +62,10 @@ impl ConvertSnapshot {
             }
         }
 
+        // Automatically clear RAM still holding the C64 power-on pattern so it
+        // becomes usable free space (mirrors the manual "f 0000 ffff 00" step).
+        FindRam::clear_poweron_pattern(&mut ram);
+
         let mut ram_finder = FindRam::with_extra_blocks(&ram, &self.extra_ram_blocks);
         let patch_mem = PatchMem::new(&snap, &mut *ram, &mut ram_finder)
             .map_err(|e| format!("Memory patching failed: {}", e))?;

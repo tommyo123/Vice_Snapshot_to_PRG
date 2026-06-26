@@ -11,7 +11,7 @@
 
 #![allow(dead_code)]
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RamBlock {
     pub address: u16,
     pub value: u8,
@@ -121,6 +121,260 @@ impl FindRam {
         }
     }
 
+    /// Mark `[addr, addr+count)` as used so it won't be handed out by
+    /// [`allocate`]/[`allocate_in_range`]. Used to protect a caller-chosen
+    /// trampoline location. Blocks that overlap the range are trimmed or split.
+    pub fn reserve(&mut self, addr: u16, count: u16) {
+        if count == 0 {
+            return;
+        }
+        let r0 = addr as u32;
+        let r1 = r0 + count as u32;
+        let mut out: Vec<RamBlock> = Vec::new();
+        for b in &self.blocks {
+            let b0 = b.address as u32;
+            let b1 = b0 + b.count as u32;
+            if b1 <= r0 || b0 >= r1 {
+                out.push(*b); // no overlap
+                continue;
+            }
+            // left remainder
+            if b0 < r0 {
+                out.push(RamBlock { address: b.address, value: b.value, count: (r0 - b0) as u16 });
+            }
+            // right remainder
+            if b1 > r1 {
+                out.push(RamBlock { address: r1 as u16, value: b.value, count: (b1 - r1) as u16 });
+            }
+        }
+        self.blocks = out;
+    }
+
+    /// Expected byte of the C64 power-on RAM pattern at `addr`.
+    ///
+    /// A freshly powered C64 (and VICE's default/Smart-Attach RAM init) does not
+    /// come up all-zero; it comes up in a fixed pattern of $00 and $FF bytes.
+    /// Empirically (VICE 3.10) the pattern is: 4-byte runs of $00 or $FF that
+    /// alternate (phase offset by 2 bytes) and invert every 8 KB, e.g.
+    ///
+    /// ```text
+    /// $2000: 00 00 FF FF FF FF 00 00  00 00 FF FF FF FF 00 00 ...
+    /// $4000: FF FF 00 00 00 00 FF FF  ...   (inverted in the next 8 KB block)
+    /// ```
+    ///
+    /// which is `start $FF  XOR  (run-of-4, +2 phase)  XOR  (invert every 8 KB)`.
+    /// Because the runs are only 4 bytes long they fall below the 32-byte
+    /// threshold of the free-block scan, so such memory looks "used" even though
+    /// the program never touched it. See [`clear_poweron_pattern`].
+    pub fn poweron_pattern_byte(addr: u16) -> u8 {
+        let a = addr as u32;
+        let mut v: u8 = 0xFF; // start value
+        if (((a + 2) / 4) & 1) != 0 {
+            v ^= 0xFF; // 4-byte value run, phase-shifted by 2
+        }
+        if ((a / 8192) & 1) != 0 {
+            v ^= 0xFF; // whole 8 KB block inverted
+        }
+        v
+    }
+
+    /// Zero every region of RAM that still holds the C64 power-on pattern.
+    ///
+    /// This automates, for the common case, the manual "clear RAM" step the tool
+    /// otherwise asks for (`f 0000 ffff 00` in the VICE monitor): regions left in
+    /// their power-on state are RAM the program never used, so zeroing them is
+    /// safe and turns them into large uniform blocks the allocator can use (and
+    /// which compress to almost nothing).
+    ///
+    /// Detection is a strict match against [`poweron_pattern_byte`] over the same
+    /// $0200-$FFEF range the free scan uses. Only maximal matching spans of at
+    /// least [`MIN_PATTERN_SPAN`] bytes are cleared, so:
+    /// - the ~1% sparse random bytes VICE sprinkles in simply split the pattern
+    ///   into (still long) spans, and
+    /// - real program data — which would have to reproduce the exact global phase
+    ///   for 64+ contiguous bytes — is left untouched. A wrong guess at the
+    ///   pattern can therefore only fail to clear; it can never corrupt data.
+    ///
+    /// Returns the number of bytes cleared.
+    pub fn clear_poweron_pattern(ram: &mut [u8; 65536]) -> u32 {
+        const START: usize = 0x0200;
+        const END: usize = 0xFFEF; // inclusive, matches the free-block scan range
+        const MIN_PATTERN_SPAN: usize = 64;
+        const MAX_CONSECUTIVE_MISMATCHES: usize = 3;
+
+        let mut cleared = 0u32;
+        let mut addr = START;
+        while addr <= END {
+            if ram[addr] == Self::poweron_pattern_byte(addr as u16) {
+                let span_start = addr;
+                let mut span_end = addr;
+                let mut consecutive_mismatches = 0;
+
+                while addr <= END {
+                    if ram[addr] == Self::poweron_pattern_byte(addr as u16) {
+                        span_end = addr + 1;
+                        consecutive_mismatches = 0;
+                    } else {
+                        consecutive_mismatches += 1;
+                        if consecutive_mismatches > MAX_CONSECUTIVE_MISMATCHES {
+                            break;
+                        }
+                    }
+                    addr += 1;
+                }
+
+                if span_end - span_start >= MIN_PATTERN_SPAN {
+                    for b in &mut ram[span_start..span_end] {
+                        *b = 0;
+                    }
+                    cleared += (span_end - span_start) as u32;
+                }
+                addr = span_end;
+            } else {
+                addr += 1;
+            }
+        }
+        cleared
+    }
+
+    /// Allocate `requested_count` bytes from a block whose allocated range lies
+    /// entirely within [`min`, `limit`). Used to place the EasyFlash SAVE
+    /// trampoline and EAPI buffer in RAM that is both (a) not in the $8000-$BFFF
+    /// cartridge window and (b) above the screen / low-RAM hazards ($0200-$07FF),
+    /// which can look "free" (the $20-filled screen) but are actually in use.
+    ///
+    /// Returns Some((address, value)) on success, None if no suitable block.
+    pub fn allocate_in_range(&mut self, requested_count: u16, min: u16, limit: u16) -> Option<(u16, u8)> {
+        if requested_count == 0 {
+            return None;
+        }
+        let req = requested_count as u32;
+        let min = min as u32;
+        let limit = limit as u32;
+
+        // A block may start below `min` and/or extend past `limit`; we carve the
+        // requested span from the in-range portion (max(addr,min)..min(end,limit)).
+        let usable = |b: &RamBlock| -> Option<(u32, u32)> {
+            let start = (b.address as u32).max(min);
+            let end = (b.address as u32 + b.count as u32).min(limit);
+            if end >= start + req { Some((start, end)) } else { None }
+        };
+
+        // Pick the usable block that is highest in memory (i.e. has the highest end address in range)
+        let index = self
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| usable(b).is_some())
+            .max_by_key(|(_, b)| {
+                let (_, end) = usable(b).unwrap();
+                end
+            })
+            .map(|(i, _)| i)?;
+
+        let block = self.blocks[index].clone();
+        let (_, end) = usable(&block).unwrap();
+        // Carve the allocation from the top/end of the usable portion of the block
+        let alloc_start = end - req;
+        let value = block.value;
+        let block_start = block.address as u32;
+        let block_end = block_start + block.count as u32;
+
+        // Replace the block with its left and right remainders.
+        self.blocks.remove(index);
+        if alloc_start > block_start {
+            self.blocks.push(RamBlock {
+                address: block_start as u16,
+                value,
+                count: (alloc_start - block_start) as u16,
+            });
+        }
+        let right_start = alloc_start + req;
+        if block_end > right_start {
+            self.blocks.push(RamBlock {
+                address: right_start as u16,
+                value,
+                count: (block_end - right_start) as u16,
+            });
+        }
+        Some((alloc_start as u16, value))
+    }
+
+    /// Allocate `requested_count` bytes starting at an address aligned to `align` 
+    /// from a block whose allocated range lies entirely within [`min`, `limit`).
+    ///
+    /// Returns Some((address, value)) on success, None if no suitable aligned block.
+    pub fn allocate_aligned_in_range(
+        &mut self,
+        requested_count: u16,
+        align: u16,
+        min: u16,
+        limit: u16,
+    ) -> Option<(u16, u8)> {
+        if requested_count == 0 || align == 0 {
+            return None;
+        }
+        let req = requested_count as u32;
+        let align = align as u32;
+        let min = min as u32;
+        let limit = limit as u32;
+
+        // A block may start below `min` and/or extend past `limit`; we carve the
+        // requested span from the in-range portion (max(addr,min)..min(end,limit)).
+        let usable = |b: &RamBlock| -> Option<(u32, u32)> {
+            let start = (b.address as u32).max(min);
+            let end = (b.address as u32 + b.count as u32).min(limit);
+            if end < start + req {
+                return None;
+            }
+            // Find highest aligned start address A such that A >= start and A + req <= end
+            // A <= end - req => max A = ((end - req) / align) * align
+            let a = ((end - req) / align) * align;
+            if a >= start {
+                Some((a, end))
+            } else {
+                None
+            }
+        };
+
+        // Pick the usable block that has the highest aligned start address
+        let index = self
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| usable(b).is_some())
+            .max_by_key(|(_, b)| {
+                let (a, _) = usable(b).unwrap();
+                a
+            })
+            .map(|(i, _)| i)?;
+
+        let block = self.blocks[index].clone();
+        let (alloc_start, _) = usable(&block).unwrap();
+        let value = block.value;
+        let block_start = block.address as u32;
+        let block_end = block_start + block.count as u32;
+
+        // Replace the block with its left and right remainders.
+        self.blocks.remove(index);
+        if alloc_start > block_start {
+            self.blocks.push(RamBlock {
+                address: block_start as u16,
+                value,
+                count: (alloc_start - block_start) as u16,
+            });
+        }
+        let right_start = alloc_start + req;
+        if block_end > right_start {
+            self.blocks.push(RamBlock {
+                address: right_start as u16,
+                value,
+                count: (block_end - right_start) as u16,
+            });
+        }
+        Some((alloc_start as u16, value))
+    }
+
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
@@ -138,9 +392,20 @@ impl FindRam {
 mod tests {
     use super::*;
 
+    /// A 64 KB background with no run of 32+ identical bytes, so the scan only
+    /// reports the sequences a test explicitly plants (real RAM is never a single
+    /// uniform value the way `[0u8; 65536]` is).
+    fn varied_ram() -> [u8; 65536] {
+        let mut ram = [0u8; 65536];
+        for (i, b) in ram.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        ram
+    }
+
     #[test]
     fn test_find_sequences() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // Create a sequence of 64 zeros at $2500
         for i in 0x2500..0x2540 {
@@ -168,7 +433,7 @@ mod tests {
 
     #[test]
     fn test_allocate_exact_match() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // 32 zeros at $2500
         for i in 0x2500..0x2520 {
@@ -187,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_allocate_partial() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // 64 zeros at $5000
         for i in 0x5000..0x5040 {
@@ -209,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_allocate_best_fit() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // 100 zeros at $2000
         for i in 0x2000..0x2064 {
@@ -233,7 +498,7 @@ mod tests {
 
     #[test]
     fn test_allocate_not_found() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // Only 32 zeros available
         for i in 0x2500..0x2520 {
@@ -248,8 +513,30 @@ mod tests {
     }
 
     #[test]
+    fn test_reserve_splits_block() {
+        let mut ram = varied_ram();
+        // 256-byte free run at $3000
+        for i in 0x3000..0x3100 {
+            ram[i] = 0x00;
+        }
+        let mut finder = FindRam::new(&ram);
+        // Reserve 64 bytes in the middle ($3040-$307F).
+        finder.reserve(0x3040, 0x40);
+        // The reserved range must not be handed out: allocating 0x40 should land
+        // in one of the remainders ($3000-$303F or $3080-$30FF), never $3040.
+        for _ in 0..2 {
+            let (addr, _) = finder.allocate(0x40).expect("space remains");
+            assert!(
+                !(0x3040..0x3080).contains(&addr),
+                "allocated reserved region at ${:04X}",
+                addr
+            );
+        }
+    }
+
+    #[test]
     fn test_ignores_area_below_0x200() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // Fill entire zero page and stack with zeros (should be ignored)
         for i in 0x0000..0x0200 {
@@ -260,5 +547,122 @@ mod tests {
 
         // Should find nothing below $0200
         assert_eq!(finder.block_count(), 0);
+    }
+
+    #[test]
+    fn poweron_pattern_matches_observed_vice_bytes() {
+        // Bytes observed in a fresh VICE 3.10 C64 boot.
+        assert_eq!(FindRam::poweron_pattern_byte(0x2000), 0x00);
+        assert_eq!(FindRam::poweron_pattern_byte(0x2001), 0x00);
+        assert_eq!(FindRam::poweron_pattern_byte(0x2002), 0xFF);
+        assert_eq!(FindRam::poweron_pattern_byte(0x2005), 0xFF);
+        assert_eq!(FindRam::poweron_pattern_byte(0x2006), 0x00);
+        assert_eq!(FindRam::poweron_pattern_byte(0x4000), 0xFF);
+        assert_eq!(FindRam::poweron_pattern_byte(0x4002), 0x00);
+        assert_eq!(FindRam::poweron_pattern_byte(0xC000), 0xFF);
+    }
+
+    #[test]
+    fn clears_poweron_pattern_but_not_program_data() {
+        let mut ram = [0u8; 65536];
+        // A real pattern region (with a couple of sparse anomalies, as VICE does).
+        for a in 0x2000..0x3000 {
+            ram[a] = FindRam::poweron_pattern_byte(a as u16);
+        }
+        ram[0x2480] = 0x08; // isolated random byte
+        ram[0x2503] = 0x42;
+        // Program data that must NOT be mistaken for the pattern:
+        for a in 0x4000..0x4100 {
+            ram[a] = 0xAB; // arbitrary
+        }
+        for a in 0x5000..0x5100 {
+            ram[a] = 0xFF; // solid $FF (free, but not the alternating pattern)
+        }
+
+        let cleared = FindRam::clear_poweron_pattern(&mut ram);
+
+        // Most of the 4 KB pattern region is zeroed.
+        assert!(cleared > 0x0E00, "cleared only {cleared} bytes");
+        assert_eq!(ram[0x2800], 0);
+        assert_eq!(ram[0x2002], 0);
+        // Program data is untouched.
+        assert_eq!(ram[0x4080], 0xAB);
+        assert_eq!(ram[0x5080], 0xFF);
+        // After clearing, the region is a large free block the scan can use.
+        let finder = FindRam::new(&ram);
+        assert!(finder.find_max() >= 0x0800);
+    }
+
+    #[test]
+    fn poweron_clear_leaves_uninitialized_short_runs_alone() {
+        // A region that is NOT the pattern (all $00 program data) yields no
+        // pattern match longer than the 4-byte pattern phase, so nothing is
+        // cleared by the pattern pass (the normal scan handles all-$00 anyway).
+        let mut ram = [0u8; 65536];
+        for a in 0x6000..0x6100 {
+            ram[a] = 0x55; // not $00/$FF at all
+        }
+        let cleared = FindRam::clear_poweron_pattern(&mut ram);
+        assert_eq!(cleared, 0);
+        assert_eq!(ram[0x6080], 0x55);
+    }
+
+    #[test]
+    fn test_allocate_in_range_highest() {
+        let mut ram = varied_ram();
+
+        // Plant two 512-byte blocks of zeros: one at $2000-$2200, one at $6000-$6200
+        for i in 0x2000..0x2200 {
+            ram[i] = 0x00;
+        }
+        for i in 0x6000..0x6200 {
+            ram[i] = 0x00;
+        }
+        ram[0x6200] = 0x01; // prevent natural 0x00 at 0x6200 (since 0x6200 as u8 == 0) from extending the block
+
+        let mut finder = FindRam::new(&ram);
+        // Ask for 100 bytes in range [$1000, $7000).
+        // Since $6000-$6200 is highest, it should pick that block.
+        // It should carve the 100 bytes from the end of the usable part of the block:
+        // usable end in block is min(0x6200, 0x7000) = 0x6200.
+        // So alloc_start = 0x6200 - 100 = 0x619C.
+        let alloc = finder.allocate_in_range(100, 0x1000, 0x7000);
+        assert_eq!(alloc, Some((0x619C, 0x00)));
+
+        // The remaining parts of that block should be:
+        // Left remainder: $6000 with count 412 (0x619C - 0x6000)
+        let blocks = finder.blocks();
+        let block_6000 = blocks.iter().find(|b| b.address == 0x6000).unwrap();
+        assert_eq!(block_6000.count, 412);
+     }
+
+    #[test]
+    fn test_allocate_aligned_in_range() {
+        let mut ram = varied_ram();
+
+        // Plant a block of zeros: $2010 to $2350 (size 832 bytes)
+        // Note: page boundaries within this block are $2100, $2200, $2300.
+        for i in 0x2010..0x2350 {
+            ram[i] = 0x00;
+        }
+
+        let mut finder = FindRam::new(&ram);
+        
+        // Ask for 256 bytes page-aligned (align=256) in [$2000, $2400)
+        // Max end is 0x2350.
+        // Valid aligned ranges:
+        // - [0x2100, 0x2200]
+        // - [0x2200, 0x2300]
+        // - [0x2300, 0x2400] -> not fitting (only extends to 0x2350)
+        // Since we allocate highest first, it should return 0x2200.
+        let alloc = finder.allocate_aligned_in_range(256, 256, 0x2000, 0x2400);
+        assert_eq!(alloc, Some((0x2200, 0x00)));
+
+        // Try to allocate 768 bytes page-aligned in [$2000, $2400)
+        // Aligned starts within [0x2010, 0x2350]:
+        // - 0x2100: 0x2100 + 768 = 0x2100 + 0x300 = 0x2400 > 0x2350 (does not fit)
+        // So no aligned block of size 768 should fit.
+        let alloc_large = finder.allocate_aligned_in_range(768, 256, 0x2000, 0x2400);
+        assert_eq!(alloc_large, None);
     }
 }

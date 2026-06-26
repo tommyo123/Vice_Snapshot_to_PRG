@@ -9,16 +9,18 @@ use std::env;
 use std::path::Path;
 use std::process;
 
-use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION};
+use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, EapiBuffer, VERSION};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
 use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
+use vice_snapshot_to_prg_converter::convert_snapshot_ef_save_crt::ConvertSnapshotEfSaveCRT;
 
 #[derive(Debug, PartialEq)]
 enum OutputFormat {
     Prg,
     Crt,
     MagicDeskCrt,
+    EfSaveCrt,
 }
 
 struct CliArgs {
@@ -27,7 +29,13 @@ struct CliArgs {
     format: OutputFormat,
     cartridge_name: Option<String>,
     include_dir: Option<String>,
+    rw_dir: Option<String>,
     hook_addr: Option<u16>,
+    trampoline: Option<u16>,
+    eapi_buffer: Option<EapiBuffer>,
+    force_stash: bool,
+    force_blank: bool,
+    save_layout: Option<vice_snapshot_to_prg_converter::config::SaveLayout>,
 }
 
 fn main() {
@@ -67,7 +75,9 @@ fn main() {
             eprintln!("Warning: Output file does not have .prg extension");
             eprintln!();
         }
-        OutputFormat::Crt | OutputFormat::MagicDeskCrt if !output_lower.ends_with(".crt") => {
+        OutputFormat::Crt | OutputFormat::MagicDeskCrt | OutputFormat::EfSaveCrt
+            if !output_lower.ends_with(".crt") =>
+        {
             eprintln!("Warning: Output file does not have .crt extension");
             eprintln!();
         }
@@ -86,16 +96,11 @@ fn main() {
         }
     }
 
-    // Warn if LOAD/SAVE options used with Magic Desk
-    if cli_args.format == OutputFormat::MagicDeskCrt {
-        if cli_args.include_dir.is_some() {
-            eprintln!("Warning: --include-dir is not supported with Magic Desk format, ignoring");
-            eprintln!();
-        }
-        if cli_args.hook_addr.is_some() {
-            eprintln!("Warning: --hook-addr is not supported with Magic Desk format, ignoring");
-            eprintln!();
-        }
+    // Magic Desk supports --include-dir, but the trampoline location is fixed
+    // (the cassette buffer), so --hook-addr is ignored.
+    if cli_args.format == OutputFormat::MagicDeskCrt && cli_args.hook_addr.is_some() {
+        eprintln!("Warning: --hook-addr is not used with Magic Desk format (fixed trampoline), ignoring");
+        eprintln!();
     }
 
     // Warn if hook-addr used without include-dir
@@ -104,15 +109,44 @@ fn main() {
         eprintln!();
     }
 
-    // Validate include directory exists
-    if let Some(ref dir) = cli_args.include_dir {
+    // --rw-dir / --trampoline only apply to the EF-SAVE format
+    if cli_args.rw_dir.is_some() && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --rw-dir is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
+    if cli_args.trampoline.is_some() && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --trampoline is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
+    if cli_args.eapi_buffer.is_some() && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --eapi-buffer is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
+    if cli_args.force_stash && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --force-stash is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
+    if cli_args.force_blank && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --force-blank is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
+    if cli_args.save_layout.is_some() && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --save-layout is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
+
+    // Validate include / rw directories exist
+    for dir in [cli_args.include_dir.as_ref(), cli_args.rw_dir.as_ref()]
+        .into_iter()
+        .flatten()
+    {
         let path = Path::new(dir);
         if !path.exists() {
-            eprintln!("Error: Include directory not found: {}", dir);
+            eprintln!("Error: Directory not found: {}", dir);
             process::exit(1);
         }
         if !path.is_dir() {
-            eprintln!("Error: Include path is not a directory: {}", dir);
+            eprintln!("Error: Path is not a directory: {}", dir);
             process::exit(1);
         }
     }
@@ -130,6 +164,7 @@ fn main() {
         OutputFormat::Prg => "PRG",
         OutputFormat::Crt => "EasyFlash CRT",
         OutputFormat::MagicDeskCrt => "Magic Desk CRT",
+        OutputFormat::EfSaveCrt => "EasyFlash SAVE CRT",
     };
 
     println!("VICE Snapshot to PRG/CRT Converter v{} (CLI)", VERSION);
@@ -152,6 +187,7 @@ fn main() {
         OutputFormat::Prg => convert_prg(&cli_args),
         OutputFormat::Crt => convert_crt(&cli_args),
         OutputFormat::MagicDeskCrt => convert_magic_desk_crt(&cli_args),
+        OutputFormat::EfSaveCrt => convert_ef_save_crt(&cli_args),
     };
 
     match result {
@@ -176,7 +212,13 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut format: Option<OutputFormat> = None;
     let mut cartridge_name: Option<String> = None;
     let mut include_dir: Option<String> = None;
+    let mut rw_dir: Option<String> = None;
     let mut hook_addr: Option<u16> = None;
+    let mut trampoline: Option<u16> = None;
+    let mut eapi_buffer: Option<EapiBuffer> = None;
+    let mut force_stash = false;
+    let mut force_blank = false;
+    let mut save_layout = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -202,6 +244,12 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                 }
                 format = Some(OutputFormat::MagicDeskCrt);
             }
+            "--ef-save" => {
+                if format.is_some() {
+                    return Err("Cannot specify multiple format flags".to_string());
+                }
+                format = Some(OutputFormat::EfSaveCrt);
+            }
             "--name" => {
                 i += 1;
                 if i >= args.len() {
@@ -219,6 +267,46 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                     return Err("--include-dir requires a path".to_string());
                 }
                 include_dir = Some(args[i].clone());
+            }
+            "--rw-dir" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--rw-dir requires a path".to_string());
+                }
+                rw_dir = Some(args[i].clone());
+            }
+            "--trampoline" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--trampoline requires tape|stack|<hex address>".to_string());
+                }
+                trampoline = Some(parse_trampoline(&args[i])?);
+            }
+            "--eapi-buffer" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--eapi-buffer requires auto|screen|<hex address>".to_string());
+                }
+                eapi_buffer = Some(parse_eapi_buffer(&args[i])?);
+            }
+            "--force-stash" => {
+                force_stash = true;
+            }
+            "--force-blank" => {
+                force_blank = true;
+            }
+            "--save-layout" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--save-layout requires default|shrink|extend".to_string());
+                }
+                let layout = match args[i].to_lowercase().as_str() {
+                    "default" => vice_snapshot_to_prg_converter::config::SaveLayout::Default,
+                    "shrink" => vice_snapshot_to_prg_converter::config::SaveLayout::Shrink,
+                    "extend" => vice_snapshot_to_prg_converter::config::SaveLayout::Extend,
+                    _ => return Err(format!("Invalid --save-layout value: {} (use default|shrink|extend)", args[i])),
+                };
+                save_layout = Some(layout);
             }
             "--hook-addr" => {
                 i += 1;
@@ -262,8 +350,44 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         format,
         cartridge_name,
         include_dir,
+        rw_dir,
         hook_addr,
+        trampoline,
+        eapi_buffer,
+        force_stash,
+        force_blank,
+        save_layout,
     })
+}
+
+/// Parse a `--trampoline` value: `tape` (cassette buffer $033C), `stack` (low
+/// stack $0100), or an explicit hex address (`$5000`/`0x5000`/`5000`). When
+/// unset the converter auto-places the trampoline in free RAM.
+fn parse_trampoline(s: &str) -> Result<u16, String> {
+    match s.to_lowercase().as_str() {
+        "tape" => Ok(0x033C),
+        "stack" => Ok(0x0100),
+        _ => {
+            let h = s.trim_start_matches('$').trim_start_matches("0x");
+            u16::from_str_radix(h, 16)
+                .map_err(|_| format!("Invalid --trampoline value: {} (use tape|stack|<hex>)", s))
+        }
+    }
+}
+
+/// Parse an `--eapi-buffer` value: `auto` (free low RAM, else the screen),
+/// `screen` (force the program's screen RAM), or an explicit hex address.
+fn parse_eapi_buffer(s: &str) -> Result<EapiBuffer, String> {
+    match s.to_lowercase().as_str() {
+        "auto" => Ok(EapiBuffer::Auto),
+        "screen" => Ok(EapiBuffer::Screen),
+        _ => {
+            let h = s.trim_start_matches('$').trim_start_matches("0x");
+            u16::from_str_radix(h, 16)
+                .map(EapiBuffer::Fixed)
+                .map_err(|_| format!("Invalid --eapi-buffer value: {} (use auto|screen|<hex>)", s))
+        }
+    }
 }
 
 fn convert_prg(cli_args: &CliArgs) -> Result<(), String> {
@@ -310,12 +434,62 @@ fn convert_magic_desk_crt(cli_args: &CliArgs) -> Result<(), String> {
         config = config.with_cartridge_name(name);
     }
 
+    if let Some(ref dir) = cli_args.include_dir {
+        config = config.with_include_dir(dir);
+    }
+
     let work_path = config.base_config.work_path.clone();
     let converter = ConvertSnapshotMagicDeskCRT::new(config);
     let result = converter.convert(&cli_args.input_path, &cli_args.output_path);
 
     let _ = cleanup_work_dir(&work_path);
     result
+}
+
+fn convert_ef_save_crt(cli_args: &CliArgs) -> Result<(), String> {
+    let mut config = CrtConfig::auto().map_err(|e| format!("Failed to initialize: {}", e))?;
+
+    if let Some(ref name) = cli_args.cartridge_name {
+        config = config.with_cartridge_name(name);
+    }
+    if let Some(ref dir) = cli_args.include_dir {
+        config = config.with_include_dir(dir); // read-only area files
+    }
+    if let Some(ref dir) = cli_args.rw_dir {
+        config = config.with_rw_dir(dir); // rewritable-area default files
+    }
+    if let Some(addr) = cli_args.trampoline {
+        config = config.with_trampoline_address(addr);
+    }
+    if let Some(buf) = cli_args.eapi_buffer {
+        config = config.with_eapi_buffer(buf);
+    }
+    if cli_args.force_stash {
+        config = config.with_force_stash(true);
+    }
+    if cli_args.force_blank {
+        config = config.with_force_blank(true);
+    }
+    if let Some(layout) = cli_args.save_layout {
+        config = config.with_save_layout(layout);
+    }
+
+    let work_path = config.base_config.work_path.clone();
+    let converter = ConvertSnapshotEfSaveCRT::new(config);
+    let result = converter.convert(&cli_args.input_path, &cli_args.output_path);
+
+    let _ = cleanup_work_dir(&work_path);
+    let (tramp_addr, stash_addr, eapi_addr) = result?;
+
+    println!("SAVE/LOAD trampoline address: ${:04X}", tramp_addr);
+    println!("EAPI flash buffer address:    ${:04X}", eapi_addr);
+    if let Some(stash) = stash_addr {
+        println!("Screen RAM stash address:     ${:04X}", stash);
+    } else {
+        println!("Screen RAM stash address:     None");
+    }
+
+    Ok(())
 }
 
 fn cleanup_work_dir(work_path: &Path) -> Result<(), String> {
@@ -354,9 +528,22 @@ fn print_usage(program_name: &str) {
     println!("  --prg                Force PRG format output");
     println!("  --crt                Force EasyFlash CRT format output");
     println!("  --magic-desk         Force Magic Desk CRT format output");
+    println!("  --ef-save            EasyFlash CRT with persistent SAVE/LOAD (libefs flash FS)");
     println!("  --name <name>        Cartridge name (CRT only, max 32 chars)");
-    println!("  --include-dir <dir>  Include PRG files from directory (EasyFlash only)");
+    println!("  --include-dir <dir>  Include PRG files from directory (EasyFlash or Magic Desk)");
+    println!("  --rw-dir <dir>       Default files seeded into the rewritable area (--ef-save only)");
+    println!("  --trampoline <loc>   SAVE/LOAD trampoline location (--ef-save only): a hex");
+    println!("                       address, or tape ($033C) / stack ($0100). Default: auto");
+    println!("                       (free RAM). The trampoline is ~300 bytes, so tape/stack");
+    println!("                       are too small; use a hex address of a large free region");
+    println!("  --eapi-buffer <loc>  Flash-driver buffer (--ef-save only): auto (default;");
+    println!("                       free RAM $0900-$0FFF, else the screen), screen (force the");
+    println!("                       program's screen RAM, clobbered during ops), or a hex addr");
     println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash only, overrides auto)");
+    println!("  --force-stash        Force screen RAM stashing/restore (--ef-save only, fails if no free 1 KB block)");
+    println!("  --force-blank        Force screen blanking during LOAD/SAVE operations (--ef-save only)");
+    println!("  --save-layout <lay>  Strategy for save areas (--ef-save only): default (64 banks),");
+    println!("                       shrink (uses 32 banks if fits), extend (uses 64 banks, larger areas)");
     println!("  -h, --help           Show this help message");
     println!();
     println!("EXAMPLES:");
@@ -366,6 +553,8 @@ fn print_usage(program_name: &str) {
     println!("  {} --crt --include-dir ./files snapshot.vsf game.crt", name);
     println!("  {} --crt --include-dir ./files --hook-addr $0334 snapshot.vsf game.crt", name);
     println!("  {} --magic-desk --name \"My Game\" snapshot.vsf game.crt", name);
+    println!("  {} --magic-desk --include-dir ./files snapshot.vsf game.crt", name);
+    println!("  {} --ef-save --include-dir ./ro --rw-dir ./defaults snapshot.vsf game.crt", name);
     println!();
     println!("IMPORTANT:");
     println!("  - Memory MUST be initialized before snapshot (f 0000 ffff 00)");

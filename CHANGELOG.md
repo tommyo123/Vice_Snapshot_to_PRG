@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **EasyFlash SAVE - persistent flash filesystem** (`--ef-save`) - produces an EasyFlash cartridge that restores the snapshot *and* gives the running program a read/write flash filesystem, by embedding drunella's [libefs](https://github.com/Drunella/libefs) (Apache-2.0) and the AM29F040 EAPI driver
+    - The KERNAL `LOAD`/`SAVE` vectors are hooked to libefs through a small RAM trampoline; `LOAD"NAME",8,1` and `SAVE"NAME",8` read and write flash with no program changes
+    - **Two directories** - a read-only area (`--include-dir`, e.g. a full D81's worth of files that never change) plus a rewritable area pre-seeded with default files (`--rw-dir`, e.g. a starting high-score table). `LOAD` transparently searches both
+    - **Persistent overwrites** - a plain `SAVE"NAME",8` over an existing file is auto-promoted to the CBM replace command (`@0:`), so high-scores / save-games rotate in place: the old directory entry is invalidated and the new file is appended to free flash. Programs that pass their own `@...` command are left untouched
+    - **Automatic garbage collection** - the rewritable area is two ping-pong halves; when one fills with live + invalidated files, libefs copies the live files to the other half and erases the full sector, transparently during a `SAVE`. Both halves live in HIROM (chip 1), keeping the sector erase off the chip libefs executes from. Verified across many save/defragment cycles with no data loss or session reset
+    - Reserves 128 KB of the 1 MB flash for the rewritable area (two 64 KB ping-pong halves); the rest holds the restore payload and the read-only files
+    - **C64 RAM use** - the cartridge needs a little free C64 RAM for the running engine: ~300 bytes (below `$8000`) for the LOAD/SAVE trampoline and a page-aligned ~1 KB buffer (in `$0000-$0FFF`, the only RAM reachable in Ultimax mode) for the AM29F040 flash driver, which must execute from RAM during a write. Both are auto-placed in free RAM
+        - `--trampoline <addr>` overrides where the trampoline goes (e.g. a fixed scratch region for a RAM-hungry game); `tape`/`stack` are accepted names but are too small for the ~300-byte trampoline
+        - `--eapi-buffer <auto|screen|addr>` controls the flash buffer. **`auto`** (default) uses free RAM in `$0900-$0FFF`, and if there is none **falls back to the running program's screen RAM** — the screen is only clobbered during the LOAD/SAVE and the program redraws it afterward, so a RAM-full game can still save. `screen` forces that; an explicit address must be page-aligned in `$0400-$0C00` (VIC bank 0)
+    - To persist changes back to the `.crt` on disk, run VICE with `-easyflashcrtwrite` (writes the image back on a clean exit/detach)
+    - Embeds a locally-patched libefs (upstream `42e5570`'s defragment path jumps to a bogus address even with its callbacks disabled — it reads the config from the wrong flash bank; see `vendor/libefs/defragment-callback-fix.patch`)
+    - **GUI** - "EasyFlash SAVE" is now a cartridge type in the dropdown; selecting it reveals the rewritable-defaults directory picker and the flash-buffer placement control (Auto / Screen RAM / Custom address), at full parity with the CLI
+    - **EasyFlash SAVE Directory Viewer** - added a standalone Python utility `show_save_dir.py` that lists files in the save areas of persistent save cartridges, displaying status (Active, Overwritten, Deleted), sizes, banks, offsets, and flags
+    - **Screen RAM Stashing & Swapping** (`--force-stash`) - implemented stashing and swapping of screen matrix data to a designated free RAM region during save/load operations when the EAPI buffer falls back to the screen RAM
+    - **Screen Blanking Option** (`--force-blank`) - added option to temporarily blank the screen display during write/erase operations to improve write stability
+    - **$C000-$CFFF RAM Range Search** - extended auto-placement search to utilize the `$C000-$CFFF` range for the trampoline and screen stash
+    - **GUI Settings for Stash & Blank** - added "Force screen stash" and "Force screen blank" checkboxes, and automated prepopulation of the LOAD/SAVE directories in the GUI when selecting a snapshot
+    - **Complete KERNAL I/O Channel Hooking** - hooked vectors for `OPEN` ($031C), `CLOSE` ($031E), `CHKIN` ($0320), `CKOUT` ($0322), `CLRCHN` ($0324), `CHRIN` ($0326), and `CHROUT` ($0328) to point to the EFS trampoline, allowing transparent character-by-character and sequential channel file operations. Includes backup and restore of original vectors to maintain pass-through compatibility for other devices.
+- **Magic Desk LOAD/SAVE hooking** - Magic Desk CRTs can now embed PRG files and intercept `LOAD "NAME",8,1`, identical to the EasyFlash feature
+    - `--include-dir` now works with `--magic-desk`; the GUI LOAD/SAVE hook option is enabled for both cartridge types
+    - Bank 0 becomes a directory bank: boot code (`$8000`), LOAD handler (`$8400`), file metadata (`$9000`), filenames (`$9800`); the restore payload moves to banks 1+ and file data follows
+    - Only a small trampoline lives in C64 RAM (cassette buffer `$0334`); during a LOAD it banks the directory bank in, copies the file straight from ROM, and banks the cartridge back out
+- **Automatic power-on RAM pattern clearing** - Detects the C64/VICE power-on RAM pattern (4-byte `$00`/`$FF` runs, inverted every 8 KB) and zeroes the regions still holding it, recovering them as free space
+    - Snapshots taken without a manual `f 0000 ffff 00` (e.g. Smart Attach) now convert far more reliably
+    - Strict, conservative match: only memory the program never wrote is cleared; a wrong match can only fail to clear, never corrupt data
+    - Applied to PRG, EasyFlash and Magic Desk output
+
+### Changed
+- Magic Desk `$DE00` bit 7 is now treated as a reversible cartridge bank-out (it only drives EXROM), correcting the earlier assumption that it was a permanent disable - this is what makes the Magic Desk LOAD hook possible
+- README updated to document Magic Desk LOAD hooking and automatic power-on pattern clearing
+- **Highest-First Memory Allocation** - changed `FindRam` range allocator to pick the highest available free blocks, minimizing collision risks with BASIC programs starting at `$0801`
+- **EAPI Buffer Optimization** - reduced EAPI buffer size to 768 bytes and offset the screen fallback to `$0500`, leaving the top of the screen display (`$0400-$04FF`) untouched
+- **CPU Port `$01` Preservation** - trampoline templates now save and restore register `$01` state to prevent KERNAL memory map corruption
+- **Noise-Tolerant Power-On RAM Clearing** - matches power-on RAM patterns with up to 3 consecutive anomalies/noise bytes, consolidating uninitialized free blocks
+
+### Fixed
+- `find_ram` unit tests (6) asserted behaviour that contradicted the whole-RAM free-block scan (they used an all-zero background); rewritten to use a realistic varied background, with added tests for the power-on pattern detection
+
+### Technical Details
+- New module: `make_magic_desk_load_save` (RAM trampoline + cart-resident LOAD handler, `$DE00`-only banking)
+- `make_magic_desk_boot_asm` / `make_magic_desk_crt_asm`: restore payload starts at bank 1 when files are embedded; bank-correct data-copy source address
+- `file_system_manager`: configurable filename base address (`$9800` for Magic Desk)
+- `find_ram`: `poweron_pattern_byte` + `clear_poweron_pattern`
+
 ## [2.2.0] - 2026-05-29
 
 ### Added

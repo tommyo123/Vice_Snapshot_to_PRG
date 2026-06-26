@@ -16,7 +16,7 @@ The converter reconstructs the full machine state: CPU registers, RAM, Color RAM
 - Produces:
   - Self-extracting **PRG**, or
   - **EasyFlash CRT** with optional LOAD-intercept for embedded PRG files, or
-  - **Magic Desk CRT** (8K cart mode, ROML only).
+  - **Magic Desk CRT** (8K cart mode, ROML only) with the same optional LOAD-intercept.
 
 Not every snapshot converts cleanly — some programs rely on hardware state that can't be faithfully reproduced from the file alone.
 
@@ -44,15 +44,26 @@ reset
 
 This produces large uniform regions that the converter can use for restore code and compressed blocks. Without this, memory becomes fragmented and the converter may fail to allocate space.
 
+### Automatic power-on pattern clearing
+
+A freshly powered C64 (and VICE's default / Smart Attach RAM init) does not come up
+all-zero — it comes up in a fixed pattern of `$00`/`$FF` bytes in short (4-byte) runs.
+Those runs are too short for the free-area scan, so untouched RAM looks "used".
+
+The converter now detects this power-on pattern and automatically zeroes the regions
+that still hold it (an exact, conservative match — only memory the program never wrote
+is cleared). This recovers that RAM as free space without a manual fill, so snapshots
+taken **without** the `f 0000 ffff 00` step convert far more reliably.
+
+Manual clearing is still the most thorough option (it also flattens program-touched
+scratch areas), but is no longer required for the common case.
+
 ### About Smart Attach
 
-Smart Attach uses VICE's realistic C64-style memory initialization, not a uniform fill. This results in a patchy, patterned RAM layout that:
-
-- dramatically reduces compressible regions,
-- reduces compression ratios,
-- increases the chance of restore-block allocation failures.
-
-You can use Smart Attach, but only if you manually clear RAM first.
+Smart Attach uses VICE's realistic C64-style memory initialization, not a uniform fill.
+The automatic power-on pattern clearing (above) now handles the bulk of this, so Smart
+Attach snapshots usually convert without a manual fill. If a particular snapshot still
+fails to allocate, clear RAM manually (`f 0000 ffff 00`) and retry.
 
 ### Stack considerations
 
@@ -87,13 +98,27 @@ If conversion fails due to insufficient free memory, the GUI offers to add RAM b
 
 - Boots directly from cartridge via CBM80 signature.
 - 8K cart mode: ROML only (`$8000–$9FFF`), no ROMH.
-- Permanent kill via `$DE00` bit 7 (cartridge cannot be re-enabled).
+- Banked out at runtime via `$DE00` bit 7. This is reversible (it only drives
+  EXROM), so the cartridge can be banked back in — which is what makes the LOAD
+  hook possible.
 - Minimum 8 banks, maximum 64 banks (512 KB).
-- **No LOAD/SAVE hooking** – use EasyFlash format for that.
+- Can embed PRG files and intercept `LOAD "NAME",8,1`, identical to EasyFlash.
 
-**ROM layout:**
+**ROM layout (no embedded files):**
 - **Bank 0 ROML**: Boot code (CBM80) + payload start
 - **Banks 0–N ROML**: Restore code + relocated decompressor + compressed RAM
+
+**ROM layout (with embedded files):**
+- **Bank 0 ROML** (directory): Boot code (`$8000`), LOAD handler (`$8400`),
+  file metadata (`$9000`), filenames (`$9800`)
+- **Banks 1–N ROML**: Restore code + relocated decompressor + compressed RAM
+- **Banks N+1… ROML**: Embedded PRG file data
+
+Magic Desk has no ROMH, so (unlike EasyFlash, which keeps the handler/metadata in
+ROMH at `$A000–$BFFF`) the directory lives in bank 0. Only a small trampoline sits
+in C64 RAM, in the cassette buffer (`$0334`); during a LOAD it banks the directory
+bank in, copies the requested file straight from ROM, and banks the cartridge back
+out.
 
 ## Usage
 
@@ -114,19 +139,72 @@ vice-snapshot-to-prg-converter-cli --crt --include-dir ./prg --hook-addr $0334 i
 
 # Magic Desk CRT
 vice-snapshot-to-prg-converter-cli --magic-desk --name "My Game" input.vsf output.crt
+
+# Magic Desk CRT with embedded PRGs
+vice-snapshot-to-prg-converter-cli --magic-desk --include-dir ./prg input.vsf output.crt
+
+# EasyFlash SAVE: persistent flash filesystem
+#   ./ro       = read-only files (never change)
+#   ./defaults = rewritable files seeded with defaults (e.g. a high-score table)
+vice-snapshot-to-prg-converter-cli --ef-save --include-dir ./ro --rw-dir ./defaults input.vsf output.crt
 ```
 
 **Options:**
-- `--prg` / `--crt` / `--magic-desk` – Force format (optional, auto-detected from extension for PRG/CRT)
+- `--prg` / `--crt` / `--magic-desk` / `--ef-save` – Force format (optional, auto-detected from extension for PRG/CRT)
 - `--name <name>` – Cartridge name (max 32 chars, CRT only)
-- `--include-dir <dir>` – Embed PRG files from directory (EasyFlash only)
-- `--hook-addr <hex>` – Override LOAD/SAVE hook address (EasyFlash only, requires `--include-dir`)
+- `--include-dir <dir>` – Embed PRG files from directory (EasyFlash, Magic Desk, or read-only area of `--ef-save`)
+- `--rw-dir <dir>` – Seed the rewritable area with default files (`--ef-save` only)
+- `--trampoline <hexaddr>` – Force the LOAD/SAVE trampoline location (`--ef-save` only; default: auto-placed in free RAM)
+- `--eapi-buffer <auto|screen|hexaddr>` – Flash-driver buffer placement (`--ef-save` only; default: auto, falls back to screen RAM)
+- `--hook-addr <hex>` – Override LOAD/SAVE hook address (EasyFlash only; Magic Desk uses a fixed trampoline)
 
 Output files are overwritten without prompting.
 
+### EasyFlash SAVE (`--ef-save`)
+
+Produces an EasyFlash cartridge that restores the snapshot **and** gives the program a
+read/write flash filesystem (drunella's [libefs](https://github.com/Drunella/libefs)). The
+KERNAL vectors for file access and channel I/O (`LOAD`, `SAVE`, `OPEN`, `CLOSE`, `CHKIN`, `CKOUT`, `CLRCHN`, `CHRIN`, `CHROUT`) are hooked, allowing transparent sequential file access (reading and writing character-by-character) and standard operations with no program changes.
+
+- **Read-only area** (`--include-dir`) – files that never change (up to roughly a full D81's worth).
+- **Rewritable area** (`--rw-dir`) – seeded with default files (e.g. a starting high-score table);
+  `LOAD` searches both areas.
+- A plain `SAVE"NAME",8` over an existing file **overwrites** it (auto-promoted to the CBM `@0:`
+  replace command): the old entry is invalidated and the new data appended to free flash, so
+  high-scores and save-games rotate in place. A program that supplies its own `@...` command is
+  left untouched.
+- **Garbage collection is automatic**: the rewritable area is two ping-pong halves; when one fills
+  with live + invalidated files, libefs copies the live files to the other half and erases the full
+  sector during a `SAVE`. Saving keeps working indefinitely with no data loss.
+- **C64 RAM use**: the running engine needs a little free RAM — ~300 bytes (below `$8000`) for the
+  LOAD/SAVE trampoline plus a page-aligned ~1 KB buffer in `$0000-$0FFF` for the flash driver (the
+  AM29F040 EAPI must run from RAM, reachable in Ultimax mode, during a write). Both are placed
+  automatically in free RAM.
+  - `--trampoline <hexaddr>` forces the trampoline location if a game leaves no usable gap where it
+    lands by default (`tape`/`stack` are accepted names but are too small for the ~300-byte trampoline).
+  - `--eapi-buffer <auto|screen|hexaddr>` controls the flash buffer. Default `auto` uses free RAM in
+    `$0900-$0FFF` and, if a game leaves none, **falls back to the screen RAM** — only clobbered during
+    the LOAD/SAVE and redrawn by the program afterward, so even a RAM-full game can save. `screen`
+    forces it; a hex address must be page-aligned in `$0400-$0C00` (VIC bank 0).
+- Run VICE with **`-easyflashcrtwrite`** to persist flash changes back to the `.crt` on a clean exit.
+
+### EasyFlash SAVE Directory Viewer
+
+A standalone Python utility is included to parse and view the directory structure of an EasyFlash persistent save cartridge (`.crt`), including deleted and overwritten files:
+
+```bash
+python show_save_dir.py <path_to_crt> [--show-ro]
+```
+
+This tool:
+* Inspects bank 0 HIROM to automatically extract the cartridge name and `libefs` storage configuration.
+* Detects whether directories reside in LOROM or HIROM dynamically based on the configuration's `dir_high` value, supporting both the old alternating format and HIROM-only layout.
+* Decodes PETSCII filenames into readable ASCII.
+* Deduces the status of each file slot: **Active**, **Overwritten** (superseded by a later entry of the same name), or **Deleted** (explicitly scratched or deleted by a later version).
+
 ### GUI
 
-The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type (EasyFlash or Magic Desk) from the dropdown. LOAD/SAVE hooking options are automatically disabled for Magic Desk. If conversion fails, a dialog offers to add manual RAM blocks.
+The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type — **EasyFlash**, **Magic Desk**, or **EasyFlash SAVE** — from the dropdown. LOAD/SAVE hooking with an include directory works for all three; the custom hook-address controls apply to EasyFlash (Magic Desk uses a fixed trampoline). Choosing **EasyFlash SAVE** reveals its extra controls — a rewritable-defaults directory and the flash-buffer placement (Auto / Screen RAM / Custom address) — mirroring the CLI's `--rw-dir`, `--trampoline`, and `--eapi-buffer`. If conversion fails, a dialog offers to add manual RAM blocks.
 
 ### Recommended workflow
 

@@ -26,6 +26,9 @@ pub struct MakeCRTAsm {
     ram_lzsa_size: usize,
     restore_code_size: usize,
     load_save_code_size: usize,
+    /// ROM bank where the restore payload begins (0 normally; 1 for the EasyFlash
+    /// SAVE variant, where bank 0 LOROM is reserved for the libefs library).
+    restore_start_bank: usize,
 }
 
 impl MakeCRTAsm {
@@ -74,7 +77,14 @@ impl MakeCRTAsm {
             ram_lzsa_size,
             restore_code_size,
             load_save_code_size,
+            restore_start_bank: 0,
         })
+    }
+
+    /// Set the ROM bank where the restore payload begins (EasyFlash SAVE variant).
+    pub fn with_restore_start_bank(mut self, bank: usize) -> Self {
+        self.restore_start_bank = bank;
+        self
     }
 
     /// Generate CRT restore code binary (to be placed at $0340 in RAM)
@@ -87,11 +97,15 @@ impl MakeCRTAsm {
     fn generate_data_copy_code(&self, ram_end_data_start: usize, end_data_size: usize) -> String {
         let roml_bank_start = 0x8000usize;
         let roml_bank_size = 8192usize;
-        let roml_end_data_start = roml_bank_start + self.restore_code_size + self.load_save_code_size;
-
-        let source_bank = (roml_end_data_start - roml_bank_start) / roml_bank_size;
-        let source_hi = (roml_end_data_start >> 8) & 0xFF;
-        let source_lo = roml_end_data_start & 0xFF;
+        // The "end data" (relocated decompressor + RAM.lzsa) follows the restore
+        // code. With restore_start_bank > 0 the payload begins at that bank
+        // (bank 0 LOROM is reserved for libefs in the SAVE variant).
+        let end_data_global =
+            self.restore_start_bank * roml_bank_size + self.restore_code_size + self.load_save_code_size;
+        let source_bank = end_data_global / roml_bank_size;
+        let source_addr = roml_bank_start + (end_data_global % roml_bank_size);
+        let source_hi = (source_addr >> 8) & 0xFF;
+        let source_lo = source_addr & 0xFF;
         let ram_dest_hi = (ram_end_data_start >> 8) & 0xFF;
         let ram_dest_lo = ram_end_data_start & 0xFF;
 

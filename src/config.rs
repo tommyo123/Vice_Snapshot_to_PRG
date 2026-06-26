@@ -58,6 +58,30 @@ impl Default for Config {
     }
 }
 
+/// Where the EAPI flash write/erase buffer (~1 KB, page-aligned) is placed in
+/// C64 RAM. It must be reachable in Ultimax mode (`$0000-$0FFF`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EapiBuffer {
+    /// Find free RAM in `$0900-$0FFF`; if none, fall back to the screen.
+    Auto,
+    /// Use the running program's current screen RAM (clobbered during the op;
+    /// the program redraws afterward). Needs the screen in VIC bank 0, `$0400-$0C00`.
+    Screen,
+    /// Explicit page-aligned address in `$0400-$0C00`.
+    Fixed(u16),
+}
+
+/// Strategy for placing and sizing the writeable save area banks in EasyFlash SAVE mode.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SaveLayout {
+    /// 64 banks total, Area 1 at bank 48, Area 2 at bank 56 (64 KB each).
+    Default,
+    /// Shrink the cartridge to 32 banks (512 KB) if payload fits; otherwise 64 banks.
+    Shrink,
+    /// Keep 64 banks, but automatically move and extend save areas to use all unused banks.
+    Extend,
+}
+
 /// Configuration for CRT (EasyFlash / Magic Desk cartridge) conversion
 #[derive(Clone)]
 pub struct CrtConfig {
@@ -73,6 +97,16 @@ pub struct CrtConfig {
     pub cartridge_name: Option<String>,
     /// Enable LOAD/SAVE hooking
     pub patch_load_save: bool,
+    /// EasyFlash SAVE: directory of default files seeded into the rewritable area
+    pub rw_dir: Option<String>,
+    /// EasyFlash SAVE: where the EAPI flash buffer goes in C64 RAM
+    pub eapi_buffer: EapiBuffer,
+    /// EasyFlash SAVE: force screen stashing (fails conversion if no block found)
+    pub force_stash: bool,
+    /// EasyFlash SAVE: force screen blanking during LOAD/SAVE operations
+    pub force_blank: bool,
+    /// EasyFlash SAVE: strategy for placing and sizing the writeable save area banks
+    pub save_layout: SaveLayout,
 }
 
 impl CrtConfig {
@@ -85,7 +119,42 @@ impl CrtConfig {
             auto_location: true,
             cartridge_name: None,
             patch_load_save: false,
+            rw_dir: None,
+            eapi_buffer: EapiBuffer::Auto,
+            force_stash: false,
+            force_blank: false,
+            save_layout: SaveLayout::Default,
         }
+    }
+
+    /// Set the strategy for placing and sizing the writeable save area banks (EF SAVE).
+    pub fn with_save_layout(mut self, layout: SaveLayout) -> Self {
+        self.save_layout = layout;
+        self
+    }
+
+    /// Set the directory of default files for the rewritable area (EF SAVE).
+    pub fn with_rw_dir(mut self, dir: &str) -> Self {
+        self.rw_dir = Some(dir.to_string());
+        self
+    }
+
+    /// Set where the EAPI flash buffer is placed (EF SAVE).
+    pub fn with_eapi_buffer(mut self, buf: EapiBuffer) -> Self {
+        self.eapi_buffer = buf;
+        self
+    }
+
+    /// Set whether to force screen stashing (EF SAVE).
+    pub fn with_force_stash(mut self, force: bool) -> Self {
+        self.force_stash = force;
+        self
+    }
+
+    /// Set whether to force screen blanking (EF SAVE).
+    pub fn with_force_blank(mut self, blank: bool) -> Self {
+        self.force_blank = blank;
+        self
     }
 
     /// Create with auto-generated work directory
