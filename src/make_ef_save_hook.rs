@@ -19,13 +19,13 @@ use crate::ef_save::{
 };
 
 // KERNAL vectors on page 3
-pub const OPEN_VECTOR: usize = 0x031C;
-pub const CLOSE_VECTOR: usize = 0x031E;
-pub const CHKIN_VECTOR: usize = 0x0320;
-pub const CKOUT_VECTOR: usize = 0x0322;
-pub const CLRCHN_VECTOR: usize = 0x0324;
-pub const CHRIN_VECTOR: usize = 0x0326;
-pub const CHROUT_VECTOR: usize = 0x0328;
+pub const OPEN_VECTOR: usize = 0x031A;
+pub const CLOSE_VECTOR: usize = 0x031C;
+pub const CHKIN_VECTOR: usize = 0x031E;
+pub const CKOUT_VECTOR: usize = 0x0320;
+pub const CLRCHN_VECTOR: usize = 0x0322;
+pub const CHRIN_VECTOR: usize = 0x0324;
+pub const CHROUT_VECTOR: usize = 0x0326;
 pub const LOAD_VECTOR: usize = 0x0330;
 pub const SAVE_VECTOR: usize = 0x0332;
 
