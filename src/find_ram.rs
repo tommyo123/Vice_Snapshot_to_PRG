@@ -665,34 +665,4 @@ mod tests {
         let alloc_large = finder.allocate_aligned_in_range(768, 256, 0x2000, 0x2400);
         assert_eq!(alloc_large, None);
     }
-
-    #[test]
-    fn test_allocate_aligned_in_range() {
-        let mut ram = varied_ram();
-
-        // Plant a block of zeros: $2010 to $2350 (size 832 bytes)
-        // Note: page boundaries within this block are $2100, $2200, $2300.
-        for i in 0x2010..0x2350 {
-            ram[i] = 0x00;
-        }
-
-        let mut finder = FindRam::new(&ram);
-        
-        // Ask for 256 bytes page-aligned (align=256) in [$2000, $2400)
-        // Max end is 0x2350.
-        // Valid aligned ranges:
-        // - [0x2100, 0x2200]
-        // - [0x2200, 0x2300]
-        // - [0x2300, 0x2400] -> not fitting (only extends to 0x2350)
-        // Since we allocate highest first, it should return 0x2200.
-        let alloc = finder.allocate_aligned_in_range(256, 256, 0x2000, 0x2400);
-        assert_eq!(alloc, Some((0x2200, 0x00)));
-
-        // Try to allocate 768 bytes page-aligned in [$2000, $2400)
-        // Aligned starts within [0x2010, 0x2350]:
-        // - 0x2100: 0x2100 + 768 = 0x2100 + 0x300 = 0x2400 > 0x2350 (does not fit)
-        // So no aligned block of size 768 should fit.
-        let alloc_large = finder.allocate_aligned_in_range(768, 256, 0x2000, 0x2400);
-        assert_eq!(alloc_large, None);
-    }
 }
