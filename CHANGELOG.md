@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - **Screen Blanking Option** (`--force-blank`) - added option to temporarily blank the screen display during write/erase operations to improve write stability
     - **$C000-$CFFF RAM Range Search** - extended auto-placement search to utilize the `$C000-$CFFF` range for the trampoline and screen stash
     - **GUI Settings for Stash & Blank** - added "Force screen stash" and "Force screen blank" checkboxes, and automated prepopulation of the LOAD/SAVE directories in the GUI when selecting a snapshot
+    - **Complete KERNAL I/O Channel Hooking** - hooked vectors for `OPEN` ($031C), `CLOSE` ($031E), `CHKIN` ($0320), `CKOUT` ($0322), `CLRCHN` ($0324), `CHRIN` ($0326), and `CHROUT` ($0328) to point to the EFS trampoline, allowing transparent character-by-character and sequential channel file operations. Includes backup and restore of original vectors to maintain pass-through compatibility for other devices.
 - **Magic Desk LOAD/SAVE hooking** - Magic Desk CRTs can now embed PRG files and intercept `LOAD "NAME",8,1`, identical to the EasyFlash feature
     - `--include-dir` now works with `--magic-desk`; the GUI LOAD/SAVE hook option is enabled for both cartridge types
     - Bank 0 becomes a directory bank: boot code (`$8000`), LOAD handler (`$8400`), file metadata (`$9000`), filenames (`$9800`); the restore payload moves to banks 1+ and file data follows

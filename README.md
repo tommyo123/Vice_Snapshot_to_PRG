@@ -164,8 +164,7 @@ Output files are overwritten without prompting.
 
 Produces an EasyFlash cartridge that restores the snapshot **and** gives the program a
 read/write flash filesystem (drunella's [libefs](https://github.com/Drunella/libefs)). The
-KERNAL `LOAD`/`SAVE` vectors are hooked, so the program uses ordinary `LOAD"NAME",8,1` and
-`SAVE"NAME",8` with no changes.
+KERNAL vectors for file access and channel I/O (`LOAD`, `SAVE`, `OPEN`, `CLOSE`, `CHKIN`, `CKOUT`, `CLRCHN`, `CHRIN`, `CHROUT`) are hooked, allowing transparent sequential file access (reading and writing character-by-character) and standard operations with no program changes.
 
 - **Read-only area** (`--include-dir`) – files that never change (up to roughly a full D81's worth).
 - **Rewritable area** (`--rw-dir`) – seeded with default files (e.g. a starting high-score table);
