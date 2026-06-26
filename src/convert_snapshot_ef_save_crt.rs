@@ -294,10 +294,11 @@ impl ConvertSnapshotEfSaveCRT {
     /// program). `Screen`/`Fixed` force those choices.
     fn resolve_eapi_buffer(
         &self,
-        _snap: &C64Snapshot,
+        snap: &C64Snapshot,
         ram_finder: &mut FindRam,
         screen_addr: u16,
     ) -> Result<(u8, Option<u16>), String> {
+        let mut blank_screen_used = false;
         let eapi_page_hi = match self.config.eapi_buffer {
             EapiBuffer::Fixed(addr) => place_eapi_buffer(addr, ram_finder, "The chosen EAPI buffer")?,
             EapiBuffer::Screen => {
@@ -314,6 +315,12 @@ impl ConvertSnapshotEfSaveCRT {
                         ));
                     }
                     (alloc >> 8) as u8
+                } else if screen_looks_blank(&snap.mem.ram) {
+                    // $0400-$07FF contains only spaces: no live screen content.
+                    // Use $0400 directly — the write will overwrite spaces with
+                    // spaces, so no stash or redraw is needed.
+                    blank_screen_used = true;
+                    place_eapi_buffer(0x0400, ram_finder, "The blank screen RAM ($0400)")?
                 } else {
                     place_eapi_buffer(
                         screen_addr + 0x0100,
@@ -325,7 +332,11 @@ impl ConvertSnapshotEfSaveCRT {
         };
 
         let eapi_addr = (eapi_page_hi as u16) << 8;
-        let is_using_screen = eapi_addr >= screen_addr && eapi_addr < screen_addr + 1024;
+        // When the blank-screen path was taken the region contains only $20 bytes;
+        // overwriting and restoring it is a no-op, so skip the stash entirely.
+        let is_using_screen = !blank_screen_used
+            && eapi_addr >= screen_addr
+            && eapi_addr < screen_addr + 1024;
         let stash_addr = if is_using_screen || self.config.force_stash {
             // Try to allocate a 1024-byte block in $C000-$CFFF first, then fall back to $0800-$7FFF.
             if let Some((alloc, _)) = ram_finder.allocate_in_range(SCREEN_STASH_LEN, 0xC000, 0xD000) {
@@ -352,6 +363,13 @@ fn screen_address(snap: &C64Snapshot) -> u16 {
     let vic_bank = ((!pra) & 0x03) as u16 * 0x4000;
     let matrix = (((snap.vic.registers[0x18] >> 4) & 0x0F) as u16) * 0x0400;
     vic_bank + matrix
+}
+
+/// Returns `true` if `$0400-$07FF` (the default VIC bank-0 screen) is entirely
+/// spaces (`$20`). When true, that region carries no live content and can be used
+/// as the EAPI buffer without stashing or redrawing anything.
+fn screen_looks_blank(ram: &[u8; 65536]) -> bool {
+    ram[0x0400..0x0800].iter().all(|&b| b == 0x20)
 }
 
 /// Validate that `addr` can hold the page-aligned EAPI buffer (must be reachable
@@ -400,4 +418,48 @@ fn place_hirom_stream(crt: &mut CRTBuilder, bank: usize, data: &[u8]) -> Result<
         crt.set_bank_romh(bank + i, &page)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ram_with(fill: u8) -> Box<[u8; 65536]> {
+        Box::new([fill; 65536])
+    }
+
+    #[test]
+    fn blank_screen_all_spaces() {
+        let ram = ram_with(0x20);
+        assert!(screen_looks_blank(&ram));
+    }
+
+    #[test]
+    fn blank_screen_one_dirty_byte() {
+        let mut ram = ram_with(0x20);
+        ram[0x0600] = 0x41; // 'A'
+        assert!(!screen_looks_blank(&ram));
+    }
+
+    #[test]
+    fn blank_screen_boundary_0400() {
+        let mut ram = ram_with(0x20);
+        ram[0x0400] = 0x01;
+        assert!(!screen_looks_blank(&ram));
+    }
+
+    #[test]
+    fn blank_screen_boundary_07ff() {
+        let mut ram = ram_with(0x20);
+        ram[0x07FF] = 0x01;
+        assert!(!screen_looks_blank(&ram));
+    }
+
+    #[test]
+    fn blank_screen_0800_irrelevant() {
+        // Bytes outside $0400-$07FF don't affect the result.
+        let mut ram = ram_with(0x20);
+        ram[0x0800] = 0x41;
+        assert!(screen_looks_blank(&ram));
+    }
 }
