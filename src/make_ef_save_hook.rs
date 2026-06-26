@@ -405,9 +405,13 @@ chrout_efs:
 ; ---- helpers ----
 copy_filename:
     LDA $B7
+    CMP #$11
+    BCC cf_no_clamp
+    LDA #$10
+cf_no_clamp:
     STA name_len
     BEQ cf_done
-    LDY name_len
+    TAY
     DEY
 cf_loop:
     LDA ($BB),Y
@@ -419,32 +423,47 @@ cf_done:
 
 copy_filename_save:
     LDA $B7
-    STA name_len
     BEQ cfs_done
     LDY #$00
     LDA ($BB),Y
     CMP #$40
     BEQ cfs_plain
+
+    LDA $B7
+    CMP #$11
+    BCC cfs_prep_no_clamp
+    LDA #$10
+cfs_prep_no_clamp:
+    TAX
+    CLC
+    ADC #$03
+    STA name_len
+
     LDA #$40
     STA ${t0:04X}
     LDA #$30
     STA ${t1:04X}
     LDA #$3A
     STA ${t2:04X}
-    LDY #$00
+
+    TXA
+    TAY
+    DEY
 cfs_pre:
     LDA ($BB),Y
     STA ${t3:04X},Y
-    INY
-    CPY $B7
-    BNE cfs_pre
-    LDA $B7
-    CLC
-    ADC #$03
-    STA name_len
+    DEY
+    BPL cfs_pre
     RTS
+
 cfs_plain:
-    LDY name_len
+    LDA $B7
+    CMP #$11
+    BCC cfs_plain_no_clamp
+    LDA #$10
+cfs_plain_no_clamp:
+    STA name_len
+    TAY
     DEY
 cfs_ploop:
     LDA ($BB),Y
@@ -742,5 +761,23 @@ mod tests {
         let mut hook_no_blank = EfSaveHook::new(0x0334, 0xC0);
         let bin_no_blank = hook_no_blank.generate_binary().expect("assembles");
         assert!(bin.len() > bin_no_blank.len());
+    }
+
+    #[test]
+    fn test_filename_clamping_bytes_present() {
+        let mut hook = EfSaveHook::new(0x0334, 0xC0);
+        let bin = hook.generate_binary().expect("assembles");
+        
+        // C9 11 90 02 A9 10 is: CMP #$11; BCC +2; LDA #$10
+        let clamp_pattern = &[0xC9, 0x11, 0x90, 0x02, 0xA9, 0x10];
+        
+        let mut occurrences = 0;
+        for i in 0..=(bin.len() - clamp_pattern.len()) {
+            if &bin[i..i + clamp_pattern.len()] == clamp_pattern {
+                occurrences += 1;
+            }
+        }
+        
+        assert_eq!(occurrences, 3, "Expected exactly 3 filename clamping checks in the assembled binary");
     }
 }
