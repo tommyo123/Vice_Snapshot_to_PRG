@@ -439,11 +439,11 @@ cfs_prep_no_clamp:
     ADC #$03
     STA name_len
 
-    LDA #$40
+    LDA #$40            ; '@'
     STA ${t0:04X}
-    LDA #$30
+    LDA #$30            ; '0'
     STA ${t1:04X}
-    LDA #$3A
+    LDA #$3A            ; ':'
     STA ${t2:04X}
 
     TXA
