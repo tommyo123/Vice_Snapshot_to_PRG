@@ -71,6 +71,17 @@ pub enum EapiBuffer {
     Fixed(u16),
 }
 
+/// Strategy for placing and sizing the writeable save area banks in EasyFlash SAVE mode.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SaveLayout {
+    /// 64 banks total, Area 1 at bank 48, Area 2 at bank 56 (64 KB each).
+    Default,
+    /// Shrink the cartridge to 32 banks (512 KB) if payload fits; otherwise 64 banks.
+    Shrink,
+    /// Keep 64 banks, but automatically move and extend save areas to use all unused banks.
+    Extend,
+}
+
 /// Configuration for CRT (EasyFlash / Magic Desk cartridge) conversion
 #[derive(Clone)]
 pub struct CrtConfig {
@@ -94,6 +105,8 @@ pub struct CrtConfig {
     pub force_stash: bool,
     /// EasyFlash SAVE: force screen blanking during LOAD/SAVE operations
     pub force_blank: bool,
+    /// EasyFlash SAVE: strategy for placing and sizing the writeable save area banks
+    pub save_layout: SaveLayout,
 }
 
 impl CrtConfig {
@@ -110,7 +123,14 @@ impl CrtConfig {
             eapi_buffer: EapiBuffer::Auto,
             force_stash: false,
             force_blank: false,
+            save_layout: SaveLayout::Default,
         }
+    }
+
+    /// Set the strategy for placing and sizing the writeable save area banks (EF SAVE).
+    pub fn with_save_layout(mut self, layout: SaveLayout) -> Self {
+        self.save_layout = layout;
+        self
     }
 
     /// Set the directory of default files for the rewritable area (EF SAVE).

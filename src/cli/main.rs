@@ -35,6 +35,7 @@ struct CliArgs {
     eapi_buffer: Option<EapiBuffer>,
     force_stash: bool,
     force_blank: bool,
+    save_layout: Option<vice_snapshot_to_prg_converter::config::SaveLayout>,
 }
 
 fn main() {
@@ -129,6 +130,10 @@ fn main() {
         eprintln!("Warning: --force-blank is only used with --ef-save format, ignoring");
         eprintln!();
     }
+    if cli_args.save_layout.is_some() && cli_args.format != OutputFormat::EfSaveCrt {
+        eprintln!("Warning: --save-layout is only used with --ef-save format, ignoring");
+        eprintln!();
+    }
 
     // Validate include / rw directories exist
     for dir in [cli_args.include_dir.as_ref(), cli_args.rw_dir.as_ref()]
@@ -213,6 +218,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut eapi_buffer: Option<EapiBuffer> = None;
     let mut force_stash = false;
     let mut force_blank = false;
+    let mut save_layout = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -289,6 +295,19 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
             "--force-blank" => {
                 force_blank = true;
             }
+            "--save-layout" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--save-layout requires default|shrink|extend".to_string());
+                }
+                let layout = match args[i].to_lowercase().as_str() {
+                    "default" => vice_snapshot_to_prg_converter::config::SaveLayout::Default,
+                    "shrink" => vice_snapshot_to_prg_converter::config::SaveLayout::Shrink,
+                    "extend" => vice_snapshot_to_prg_converter::config::SaveLayout::Extend,
+                    _ => return Err(format!("Invalid --save-layout value: {} (use default|shrink|extend)", args[i])),
+                };
+                save_layout = Some(layout);
+            }
             "--hook-addr" => {
                 i += 1;
                 if i >= args.len() {
@@ -337,6 +356,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         eapi_buffer,
         force_stash,
         force_blank,
+        save_layout,
     })
 }
 
@@ -450,6 +470,9 @@ fn convert_ef_save_crt(cli_args: &CliArgs) -> Result<(), String> {
     if cli_args.force_blank {
         config = config.with_force_blank(true);
     }
+    if let Some(layout) = cli_args.save_layout {
+        config = config.with_save_layout(layout);
+    }
 
     let work_path = config.base_config.work_path.clone();
     let converter = ConvertSnapshotEfSaveCRT::new(config);
@@ -519,6 +542,8 @@ fn print_usage(program_name: &str) {
     println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash only, overrides auto)");
     println!("  --force-stash        Force screen RAM stashing/restore (--ef-save only, fails if no free 1 KB block)");
     println!("  --force-blank        Force screen blanking during LOAD/SAVE operations (--ef-save only)");
+    println!("  --save-layout <lay>  Strategy for save areas (--ef-save only): default (64 banks),");
+    println!("                       shrink (uses 32 banks if fits), extend (uses 64 banks, larger areas)");
     println!("  -h, --help           Show this help message");
     println!();
     println!("EXAMPLES:");

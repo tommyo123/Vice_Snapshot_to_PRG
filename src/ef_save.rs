@@ -111,6 +111,15 @@ impl EfsConfig {
             area2: EfsArea { dir_bank: first_rw_bank + 8, dir_high: 0xA0, files_bank: first_rw_bank + 8, files_high: 0xA0, num_banks: 8, mode: MODE_HHHH },
         }
     }
+
+    /// Create layout with custom starting bank and area sizes (in banks) for the save areas.
+    pub fn with_rw_layout(first_rw_bank: u8, area_size_banks: u8) -> Self {
+        Self {
+            area0: EfsArea { dir_bank: 0, dir_high: 0xA0, files_bank: 1, files_high: 0x80, num_banks: 0, mode: MODE_LHLH },
+            area1: EfsArea { dir_bank: first_rw_bank, dir_high: 0xA0, files_bank: first_rw_bank, files_high: 0xA0, num_banks: area_size_banks, mode: MODE_HHHH },
+            area2: EfsArea { dir_bank: first_rw_bank + area_size_banks, dir_high: 0xA0, files_bank: first_rw_bank + area_size_banks, files_high: 0xA0, num_banks: area_size_banks, mode: MODE_HHHH },
+        }
+    }
 }
 
 /// libefs code (bank 0 LOROM contents) without the 2-byte `.prg` load address.

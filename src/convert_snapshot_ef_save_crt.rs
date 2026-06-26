@@ -241,14 +241,46 @@ impl ConvertSnapshotEfSaveCRT {
             Some(d) => read_prg_dir(d)?,
             None => Vec::new(),
         };
-        let area1 = build_efs_area(&rw_files, FIRST_RW_BANK, EFS_DIR_SIZE, DIVISOR_8K)?;
-        const RW_BANKS: usize = 8; // one area = 8 banks (64 KB)
-        if EFS_DIR_SIZE + area1.files.len() > RW_BANKS * BANK_SIZE_8K {
+
+        let first_free_bank = first_ro_bank as usize + ro_banks;
+
+        let (cart_banks, first_rw_bank, rw_banks) = match self.config.save_layout {
+            crate::config::SaveLayout::Shrink => {
+                if first_free_bank <= 16 {
+                    (32, 16u8, 8u8)
+                } else {
+                    // Fall back to Default
+                    (64, FIRST_RW_BANK, 8u8)
+                }
+            }
+            crate::config::SaveLayout::Extend => {
+                let first_rw = ((first_free_bank + 7) / 8 * 8) as u8;
+                if first_rw <= FIRST_RW_BANK {
+                    let remaining = 64 - first_rw;
+                    let half = remaining / 2;
+                    let size = (half / 8 * 8) as u8;
+                    if size >= 8 {
+                        (64, first_rw, size)
+                    } else {
+                        (64, FIRST_RW_BANK, 8u8)
+                    }
+                } else {
+                    (64, FIRST_RW_BANK, 8u8)
+                }
+            }
+            crate::config::SaveLayout::Default => {
+                (64, FIRST_RW_BANK, 8u8)
+            }
+        };
+
+        let area1 = build_efs_area(&rw_files, first_rw_bank, EFS_DIR_SIZE, DIVISOR_8K)?;
+        let rw_banks_usize = rw_banks as usize;
+        if EFS_DIR_SIZE + area1.files.len() > rw_banks_usize * BANK_SIZE_8K {
             return Err("Default (rewritable) files do not fit in the save area".to_string());
         }
 
         // Config: read-only area 0 files placed at first_ro_bank (LOROM).
-        let mut cfg = EfsConfig::with_top_rw_sector(FIRST_RW_BANK);
+        let mut cfg = EfsConfig::with_rw_layout(first_rw_bank, rw_banks);
         cfg.area0.files_bank = first_ro_bank;
         cfg.area0.files_high = 0x80;
         cfg.area0.mode = ef_save::MODE_LLLL;
@@ -260,9 +292,9 @@ impl ConvertSnapshotEfSaveCRT {
         let romh = boot.generate_romh(ef_save::eapi_code(), &name_config, efs_dir)?;
 
         // Assemble the cartridge.
-        let mut crt = CRTBuilder::new(CartridgeType::EasyFlash, 64, name)?;
+        let mut crt = CRTBuilder::new(CartridgeType::EasyFlash, cart_banks, name)?;
         let ff = [0xFFu8; BANK_SIZE_8K];
-        for b in 0..64 {
+        for b in 0..cart_banks {
             crt.clear_bank(b, 0xFF)?;
             crt.set_bank_romh(b, &ff)?;
         }
@@ -274,11 +306,11 @@ impl ConvertSnapshotEfSaveCRT {
         // Read-only files (banks first_ro_bank.., LOROM)
         place_lorom_stream(&mut crt, first_ro_bank as usize, 0, &area0.files)?;
         // Rewritable area 1 seed: directory ($0000) then files ($1800), in HIROM of
-        // banks FIRST_RW_BANK.. (area 2 stays $FF/erased). Both areas are HIROM so a
+        // banks first_rw_bank.. (area 2 stays $FF/erased). Both areas are HIROM so a
         // defragment erase never blanks chip 0 (libefs).
         let mut area1_image = area1.dir.clone();
         area1_image.extend_from_slice(&area1.files);
-        place_hirom_stream(&mut crt, FIRST_RW_BANK as usize, &area1_image)?;
+        place_hirom_stream(&mut crt, first_rw_bank as usize, &area1_image)?;
 
         crt.make_crt(output_path)?;
         Ok((blob_addr, stash_addr, (eapi_page_hi as u16) << 8))
@@ -461,5 +493,56 @@ mod tests {
         let mut ram = ram_with(0x20);
         ram[0x0800] = 0x41;
         assert!(screen_looks_blank(&ram));
+    }
+
+    #[test]
+    fn test_save_layout_calculations() {
+        let calculate = |save_layout: crate::config::SaveLayout, first_free_bank: usize| -> (usize, u8, u8) {
+            match save_layout {
+                crate::config::SaveLayout::Shrink => {
+                    if first_free_bank <= 16 {
+                        (32, 16u8, 8u8)
+                    } else {
+                        (64, FIRST_RW_BANK, 8u8)
+                    }
+                }
+                crate::config::SaveLayout::Extend => {
+                    let first_rw = ((first_free_bank + 7) / 8 * 8) as u8;
+                    if first_rw <= FIRST_RW_BANK {
+                        let remaining = 64 - first_rw;
+                        let half = remaining / 2;
+                        let size = (half / 8 * 8) as u8;
+                        if size >= 8 {
+                            (64, first_rw, size)
+                        } else {
+                            (64, FIRST_RW_BANK, 8u8)
+                        }
+                    } else {
+                        (64, FIRST_RW_BANK, 8u8)
+                    }
+                }
+                crate::config::SaveLayout::Default => {
+                    (64, FIRST_RW_BANK, 8u8)
+                }
+            }
+        };
+
+        // Test Default
+        assert_eq!(calculate(crate::config::SaveLayout::Default, 5), (64, 48, 8));
+        assert_eq!(calculate(crate::config::SaveLayout::Default, 20), (64, 48, 8));
+
+        // Test Shrink
+        assert_eq!(calculate(crate::config::SaveLayout::Shrink, 10), (32, 16, 8));
+        assert_eq!(calculate(crate::config::SaveLayout::Shrink, 16), (32, 16, 8));
+        assert_eq!(calculate(crate::config::SaveLayout::Shrink, 17), (64, 48, 8));
+
+        // Test Extend
+        assert_eq!(calculate(crate::config::SaveLayout::Extend, 5), (64, 8, 24));
+        assert_eq!(calculate(crate::config::SaveLayout::Extend, 12), (64, 16, 24));
+        assert_eq!(calculate(crate::config::SaveLayout::Extend, 20), (64, 24, 16));
+        assert_eq!(calculate(crate::config::SaveLayout::Extend, 32), (64, 32, 16));
+        assert_eq!(calculate(crate::config::SaveLayout::Extend, 33), (64, 40, 8));
+        assert_eq!(calculate(crate::config::SaveLayout::Extend, 48), (64, 48, 8));
+        assert_eq!(calculate(crate::config::SaveLayout::Extend, 50), (64, 48, 8));
     }
 }

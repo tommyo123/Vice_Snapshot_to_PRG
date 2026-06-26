@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::Path;
 
-use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, EapiBuffer, VERSION};
+use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, EapiBuffer, SaveLayout, VERSION};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
 use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
@@ -321,6 +321,23 @@ fn main() {
     crt_force_blank_check.set_checked(false);
     crt_force_blank_check.hide();
 
+    crt_y += 30;
+
+    let mut crt_save_layout_label = Frame::default()
+        .with_pos(MARGIN, crt_y)
+        .with_size(100, 25)
+        .with_label("Save layout:");
+    crt_save_layout_label.set_label_size(13);
+    crt_save_layout_label.set_align(enums::Align::Left | enums::Align::Inside);
+    crt_save_layout_label.hide();
+
+    let mut crt_save_layout_choice = menu::Choice::default()
+        .with_pos(MARGIN + 110, crt_y)
+        .with_size(310, 25);
+    crt_save_layout_choice.add_choice("Default (64 banks, 64 KB Areas)|Shrink cartridge (32 banks, 64 KB Areas)|Extend save areas (64 banks, max size)");
+    crt_save_layout_choice.set_value(0);
+    crt_save_layout_choice.hide();
+
     crt_tab.end();
     tabs.end();
 
@@ -395,6 +412,8 @@ fn main() {
     let crt_eapi_label_rc = Rc::new(RefCell::new(crt_eapi_label.clone()));
     let crt_force_stash_check_rc = Rc::new(RefCell::new(crt_force_stash_check.clone()));
     let crt_force_blank_check_rc = Rc::new(RefCell::new(crt_force_blank_check.clone()));
+    let crt_save_layout_label_rc = Rc::new(RefCell::new(crt_save_layout_label.clone()));
+    let crt_save_layout_choice_rc = Rc::new(RefCell::new(crt_save_layout_choice.clone()));
     let status_buffer_rc = Rc::new(RefCell::new(status_buffer));
     let tabs_rc = Rc::new(RefCell::new(tabs.clone()));
 
@@ -422,6 +441,8 @@ fn main() {
         let eapi_addr = crt_eapi_addr_rc.clone();
         let force_stash_check = crt_force_stash_check_rc.clone();
         let force_blank_check = crt_force_blank_check_rc.clone();
+        let save_layout_label = crt_save_layout_label_rc.clone();
+        let save_layout_choice = crt_save_layout_choice_rc.clone();
 
         crt_type_choice.clone().set_callback(move |choice| {
             let is_magic_desk = choice.value() == 1;
@@ -437,6 +458,8 @@ fn main() {
                 eapi_addr.borrow_mut().show();
                 force_stash_check.borrow_mut().show();
                 force_blank_check.borrow_mut().show();
+                save_layout_label.borrow_mut().show();
+                save_layout_choice.borrow_mut().show();
             } else {
                 rw_label.borrow_mut().hide();
                 rw_field.borrow_mut().hide();
@@ -446,6 +469,8 @@ fn main() {
                 eapi_addr.borrow_mut().hide();
                 force_stash_check.borrow_mut().hide();
                 force_blank_check.borrow_mut().hide();
+                save_layout_label.borrow_mut().hide();
+                save_layout_choice.borrow_mut().hide();
             }
 
             if is_ef_save {
@@ -473,6 +498,7 @@ fn main() {
                 }
                 force_stash_check.borrow_mut().activate();
                 force_blank_check.borrow_mut().activate();
+                save_layout_choice.borrow_mut().activate();
             } else {
                 hook_check.borrow_mut().activate(); // user controls hooking
                 let hooked = hook_check.borrow().is_checked();
@@ -487,6 +513,7 @@ fn main() {
                 }
                 force_stash_check.borrow_mut().deactivate();
                 force_blank_check.borrow_mut().deactivate();
+                save_layout_choice.borrow_mut().deactivate();
             }
             app::redraw();
         });
@@ -778,6 +805,7 @@ fn main() {
         let crt_eapi_addr = crt_eapi_addr_rc.clone();
         let crt_force_stash = crt_force_stash_check_rc.clone();
         let crt_force_blank = crt_force_blank_check_rc.clone();
+        let crt_save_layout = crt_save_layout_choice_rc.clone();
         let status_buffer = status_buffer_rc.clone();
         let tabs = tabs_rc.clone();
         let extra_blocks = extra_ram_blocks_rc.clone();
@@ -807,6 +835,7 @@ fn main() {
                 let eapi_addr_text = crt_eapi_addr.borrow().value();
                 let force_stash = crt_force_stash.borrow().is_checked();
                 let force_blank = crt_force_blank.borrow().is_checked();
+                let save_layout_choice_val = crt_save_layout.borrow().value();
                 let cart_type_name = match cart_type {
                     1 => "Magic Desk",
                     2 => "EasyFlash SAVE",
@@ -911,6 +940,11 @@ fn main() {
                             config.patch_load_save = true;
                             config.force_stash = force_stash;
                             config.force_blank = force_blank;
+                            config.save_layout = match save_layout_choice_val {
+                                1 => SaveLayout::Shrink,
+                                2 => SaveLayout::Extend,
+                                _ => SaveLayout::Default,
+                            };
                             config.auto_location = auto_location;
                             if !auto_location {
                                 if let Some(addr) = parse_addr(&addr_text) {
