@@ -300,6 +300,81 @@ impl FindRam {
         Some((alloc_start as u16, value))
     }
 
+    /// Allocate `requested_count` bytes starting at an address aligned to `align` 
+    /// from a block whose allocated range lies entirely within [`min`, `limit`).
+    ///
+    /// Returns Some((address, value)) on success, None if no suitable aligned block.
+    pub fn allocate_aligned_in_range(
+        &mut self,
+        requested_count: u16,
+        align: u16,
+        min: u16,
+        limit: u16,
+    ) -> Option<(u16, u8)> {
+        if requested_count == 0 || align == 0 {
+            return None;
+        }
+        let req = requested_count as u32;
+        let align = align as u32;
+        let min = min as u32;
+        let limit = limit as u32;
+
+        // A block may start below `min` and/or extend past `limit`; we carve the
+        // requested span from the in-range portion (max(addr,min)..min(end,limit)).
+        let usable = |b: &RamBlock| -> Option<(u32, u32)> {
+            let start = (b.address as u32).max(min);
+            let end = (b.address as u32 + b.count as u32).min(limit);
+            if end < start + req {
+                return None;
+            }
+            // Find highest aligned start address A such that A >= start and A + req <= end
+            // A <= end - req => max A = ((end - req) / align) * align
+            let a = ((end - req) / align) * align;
+            if a >= start {
+                Some((a, end))
+            } else {
+                None
+            }
+        };
+
+        // Pick the usable block that has the highest aligned start address
+        let index = self
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| usable(b).is_some())
+            .max_by_key(|(_, b)| {
+                let (a, _) = usable(b).unwrap();
+                a
+            })
+            .map(|(i, _)| i)?;
+
+        let block = self.blocks[index].clone();
+        let (alloc_start, _) = usable(&block).unwrap();
+        let value = block.value;
+        let block_start = block.address as u32;
+        let block_end = block_start + block.count as u32;
+
+        // Replace the block with its left and right remainders.
+        self.blocks.remove(index);
+        if alloc_start > block_start {
+            self.blocks.push(RamBlock {
+                address: block_start as u16,
+                value,
+                count: (alloc_start - block_start) as u16,
+            });
+        }
+        let right_start = alloc_start + req;
+        if block_end > right_start {
+            self.blocks.push(RamBlock {
+                address: right_start as u16,
+                value,
+                count: (block_end - right_start) as u16,
+            });
+        }
+        Some((alloc_start as u16, value))
+    }
+
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
@@ -559,5 +634,35 @@ mod tests {
         let blocks = finder.blocks();
         let block_6000 = blocks.iter().find(|b| b.address == 0x6000).unwrap();
         assert_eq!(block_6000.count, 412);
+    }
+
+    #[test]
+    fn test_allocate_aligned_in_range() {
+        let mut ram = varied_ram();
+
+        // Plant a block of zeros: $2010 to $2350 (size 832 bytes)
+        // Note: page boundaries within this block are $2100, $2200, $2300.
+        for i in 0x2010..0x2350 {
+            ram[i] = 0x00;
+        }
+
+        let mut finder = FindRam::new(&ram);
+        
+        // Ask for 256 bytes page-aligned (align=256) in [$2000, $2400)
+        // Max end is 0x2350.
+        // Valid aligned ranges:
+        // - [0x2100, 0x2200]
+        // - [0x2200, 0x2300]
+        // - [0x2300, 0x2400] -> not fitting (only extends to 0x2350)
+        // Since we allocate highest first, it should return 0x2200.
+        let alloc = finder.allocate_aligned_in_range(256, 256, 0x2000, 0x2400);
+        assert_eq!(alloc, Some((0x2200, 0x00)));
+
+        // Try to allocate 768 bytes page-aligned in [$2000, $2400)
+        // Aligned starts within [0x2010, 0x2350]:
+        // - 0x2100: 0x2100 + 768 = 0x2100 + 0x300 = 0x2400 > 0x2350 (does not fit)
+        // So no aligned block of size 768 should fit.
+        let alloc_large = finder.allocate_aligned_in_range(768, 256, 0x2000, 0x2400);
+        assert_eq!(alloc_large, None);
     }
 }

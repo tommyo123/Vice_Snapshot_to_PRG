@@ -305,9 +305,15 @@ impl ConvertSnapshotEfSaveCRT {
             }
             EapiBuffer::Auto => {
                 if let Some((alloc, _)) =
-                    ram_finder.allocate_in_range(EAPI_BUFFER_LEN, RAM_FLOOR, EAPI_BUFFER_CEIL)
+                    ram_finder.allocate_aligned_in_range(EAPI_BUFFER_LEN, 256, RAM_FLOOR, EAPI_BUFFER_CEIL)
                 {
-                    (((alloc + 0xFF) & 0xFF00) >> 8) as u8
+                    if alloc % 256 != 0 || alloc + EAPI_BUFFER_LEN > EAPI_BUFFER_CEIL {
+                        return Err(format!(
+                            "Sanity check failed: aligned EAPI buffer allocation at ${:04X} is invalid",
+                            alloc
+                        ));
+                    }
+                    (alloc >> 8) as u8
                 } else {
                     place_eapi_buffer(
                         screen_addr + 0x0100,
