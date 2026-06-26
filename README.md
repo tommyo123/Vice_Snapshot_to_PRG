@@ -189,6 +189,20 @@ KERNAL `LOAD`/`SAVE` vectors are hooked, so the program uses ordinary `LOAD"NAME
     forces it; a hex address must be page-aligned in `$0400-$0C00` (VIC bank 0).
 - Run VICE with **`-easyflashcrtwrite`** to persist flash changes back to the `.crt` on a clean exit.
 
+### EasyFlash SAVE Directory Viewer
+
+A standalone Python utility is included to parse and view the directory structure of an EasyFlash persistent save cartridge (`.crt`), including deleted and overwritten files:
+
+```bash
+python show_save_dir.py <path_to_crt> [--show-ro]
+```
+
+This tool:
+* Inspects bank 0 HIROM to automatically extract the cartridge name and `libefs` storage configuration.
+* Detects whether directories reside in LOROM or HIROM dynamically based on the configuration's `dir_high` value, supporting both the old alternating format and HIROM-only layout.
+* Decodes PETSCII filenames into readable ASCII.
+* Deduces the status of each file slot: **Active**, **Overwritten** (superseded by a later entry of the same name), or **Deleted** (explicitly scratched or deleted by a later version).
+
 ### GUI
 
 The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type — **EasyFlash**, **Magic Desk**, or **EasyFlash SAVE** — from the dropdown. LOAD/SAVE hooking with an include directory works for all three; the custom hook-address controls apply to EasyFlash (Magic Desk uses a fixed trampoline). Choosing **EasyFlash SAVE** reveals its extra controls — a rewritable-defaults directory and the flash-buffer placement (Auto / Screen RAM / Custom address) — mirroring the CLI's `--rw-dir`, `--trampoline`, and `--eapi-buffer`. If conversion fails, a dialog offers to add manual RAM blocks.

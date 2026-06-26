@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - To persist changes back to the `.crt` on disk, run VICE with `-easyflashcrtwrite` (writes the image back on a clean exit/detach)
     - Embeds a locally-patched libefs (upstream `42e5570`'s defragment path jumps to a bogus address even with its callbacks disabled — it reads the config from the wrong flash bank; see `vendor/libefs/defragment-callback-fix.patch`)
     - **GUI** - "EasyFlash SAVE" is now a cartridge type in the dropdown; selecting it reveals the rewritable-defaults directory picker and the flash-buffer placement control (Auto / Screen RAM / Custom address), at full parity with the CLI
+    - **EasyFlash SAVE Directory Viewer** - added a standalone Python utility `show_save_dir.py` that lists files in the save areas of persistent save cartridges, displaying status (Active, Overwritten, Deleted), sizes, banks, offsets, and flags
+    - **Screen RAM Stashing & Swapping** (`--force-stash`) - implemented stashing and swapping of screen matrix data to a designated free RAM region during save/load operations when the EAPI buffer falls back to the screen RAM
+    - **Screen Blanking Option** (`--force-blank`) - added option to temporarily blank the screen display during write/erase operations to improve write stability
+    - **$C000-$CFFF RAM Range Search** - extended auto-placement search to utilize the `$C000-$CFFF` range for the trampoline and screen stash
+    - **GUI Settings for Stash & Blank** - added "Force screen stash" and "Force screen blank" checkboxes, and automated prepopulation of the LOAD/SAVE directories in the GUI when selecting a snapshot
 - **Magic Desk LOAD/SAVE hooking** - Magic Desk CRTs can now embed PRG files and intercept `LOAD "NAME",8,1`, identical to the EasyFlash feature
     - `--include-dir` now works with `--magic-desk`; the GUI LOAD/SAVE hook option is enabled for both cartridge types
     - Bank 0 becomes a directory bank: boot code (`$8000`), LOAD handler (`$8400`), file metadata (`$9000`), filenames (`$9800`); the restore payload moves to banks 1+ and file data follows
@@ -32,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Magic Desk `$DE00` bit 7 is now treated as a reversible cartridge bank-out (it only drives EXROM), correcting the earlier assumption that it was a permanent disable - this is what makes the Magic Desk LOAD hook possible
 - README updated to document Magic Desk LOAD hooking and automatic power-on pattern clearing
+- **Highest-First Memory Allocation** - changed `FindRam` range allocator to pick the highest available free blocks, minimizing collision risks with BASIC programs starting at `$0801`
+- **EAPI Buffer Optimization** - reduced EAPI buffer size to 768 bytes and offset the screen fallback to `$0500`, leaving the top of the screen display (`$0400-$04FF`) untouched
+- **CPU Port `$01` Preservation** - trampoline templates now save and restore register `$01` state to prevent KERNAL memory map corruption
+- **Noise-Tolerant Power-On RAM Clearing** - matches power-on RAM patterns with up to 3 consecutive anomalies/noise bytes, consolidating uninitialized free blocks
 
 ### Fixed
 - `find_ram` unit tests (6) asserted behaviour that contradicted the whole-RAM free-block scan (they used an all-zero background); rewritten to use a realistic varied background, with added tests for the power-on pattern detection
