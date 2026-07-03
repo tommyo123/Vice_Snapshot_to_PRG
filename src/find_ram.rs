@@ -157,14 +157,14 @@ impl FindRam {
     /// safe and turns them into large uniform blocks the allocator can use (and
     /// which compress to almost nothing).
     ///
-    /// Detection is a strict match against [`poweron_pattern_byte`] over the same
-    /// $0200-$FFEF range the free scan uses. Only maximal matching spans of at
-    /// least [`MIN_PATTERN_SPAN`] bytes are cleared, so:
-    /// - the ~1% sparse random bytes VICE sprinkles in simply split the pattern
-    ///   into (still long) spans, and
-    /// - real program data — which would have to reproduce the exact global phase
-    ///   for 64+ contiguous bytes — is left untouched. A wrong guess at the
-    ///   pattern can therefore only fail to clear; it can never corrupt data.
+    /// Detection is a strict, byte-exact match against [`poweron_pattern_byte`]
+    /// over the same $0200-$FFEF range the free scan uses. Only maximal matching
+    /// spans of at least [`MIN_PATTERN_SPAN`] bytes are cleared: a mismatching
+    /// byte is never touched, it only splits the span. Program data is affected
+    /// only if it reproduces the exact global phase for 64+ contiguous bytes
+    /// (possible for e.g. an aligned charset of long $00/$FF runs), which is
+    /// why callers expose the pass as an option (`clear_poweron_ram`,
+    /// `--clear-poweron-ram`) instead of running it unconditionally.
     ///
     /// Returns the number of bytes cleared.
     pub fn clear_poweron_pattern(ram: &mut [u8; 65536]) -> u32 {
@@ -387,6 +387,30 @@ mod tests {
         // After clearing, the region is a large free block the scan can use.
         let finder = FindRam::new(&ram);
         assert!(finder.find_max() >= 0x0800);
+    }
+
+    #[test]
+    fn poweron_clear_never_zeroes_interior_program_bytes() {
+        // Program-written bytes inside a pattern region must never be zeroed;
+        // a mismatch ends the span instead of being absorbed into it.
+        let mut ram = [0u8; 65536];
+        for a in 0x2000..0x3000 {
+            ram[a] = FindRam::poweron_pattern_byte(a as u16);
+        }
+        // A 3-byte counter/flag/pointer a game left in the middle of the region.
+        ram[0x2800] = 0x12;
+        ram[0x2801] = 0x34;
+        ram[0x2802] = 0x56;
+
+        let cleared = FindRam::clear_poweron_pattern(&mut ram);
+
+        assert!(cleared > 0, "pattern region should still be cleared");
+        assert_eq!(ram[0x2800], 0x12, "program byte was zeroed");
+        assert_eq!(ram[0x2801], 0x34, "program byte was zeroed");
+        assert_eq!(ram[0x2802], 0x56, "program byte was zeroed");
+        // Both sides of the program bytes are cleared.
+        assert_eq!(ram[0x27FF], 0);
+        assert_eq!(ram[0x2803], 0);
     }
 
     #[test]

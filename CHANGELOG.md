@@ -11,17 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Magic Desk LOAD/SAVE hooking** - Magic Desk CRTs can now embed PRG files and intercept `LOAD "NAME",8,1`, identical to the EasyFlash feature
     - `--include-dir` now works with `--magic-desk`; the GUI LOAD/SAVE hook option is enabled for both cartridge types
     - Bank 0 becomes a directory bank: boot code (`$8000`), LOAD handler (`$8400`), file metadata (`$9000`), filenames (`$9800`); the restore payload moves to banks 1+ and file data follows
-    - Only a small trampoline lives in C64 RAM (cassette buffer `$0334`); during a LOAD it banks the directory bank in, copies the file straight from ROM, and banks the cartridge back out
-- **Automatic power-on RAM pattern clearing** - Detects the C64/VICE power-on RAM pattern (4-byte `$00`/`$FF` runs, inverted every 8 KB) and zeroes the regions still holding it, recovering them as free space
-    - Snapshots taken without a manual `f 0000 ffff 00` (e.g. Smart Attach) now convert far more reliably
-    - Strict, conservative match: only memory the program never wrote is cleared; a wrong match can only fail to clear, never corrupt data
-    - Applied to PRG, EasyFlash and Magic Desk output
+    - Only a small trampoline lives in C64 RAM; during a LOAD it banks the directory bank in, copies the file straight from ROM, and banks the cartridge back out
+    - The trampoline address is computed with the same mechanism as EasyFlash: `$0100` when the snapshot's stack pointer allows it, otherwise the cassette buffer `$0334`; `--hook-addr` and the GUI address controls now work for Magic Desk too
+- **Optional power-on RAM pattern clearing (experimental, off by default)** - Detects the C64/VICE power-on RAM pattern (4-byte `$00`/`$FF` runs, inverted every 8 KB) and zeroes the regions still holding it, recovering them as free space
+    - Automates the manual `f 0000 ffff 00` step for snapshots taken without it (e.g. Smart Attach)
+    - Strict, byte-exact match over 64+ byte spans; program data is affected only if it reproduces the exact pattern phase for 64+ contiguous bytes, which is why the pass is opt-in
+    - CLI: `--clear-poweron-ram`; GUI: "Clear power-on RAM pattern" checkbox (off by default, confirmation dialog on enable)
+    - Applies to PRG, EasyFlash and Magic Desk output; the number of cleared bytes is reported after conversion
 
 ### Changed
 - Magic Desk `$DE00` bit 7 is now treated as a reversible cartridge bank-out (it only drives EXROM), correcting the earlier assumption that it was a permanent disable - this is what makes the Magic Desk LOAD hook possible
-- README updated to document Magic Desk LOAD hooking and automatic power-on pattern clearing
+- README updated to document Magic Desk LOAD hooking and the opt-in power-on pattern clearing
 
 ### Fixed
+- Magic Desk LOAD trampoline restores the snapshot's `$01` memory configuration after a LOAD instead of forcing `#$37`
 - `find_ram` unit tests (6) asserted behaviour that contradicted the whole-RAM free-block scan (they used an all-zero background); rewritten to use a realistic varied background, with added tests for the power-on pattern detection
 
 ### Technical Details
@@ -29,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `make_magic_desk_boot_asm` / `make_magic_desk_crt_asm`: restore payload starts at bank 1 when files are embedded; bank-correct data-copy source address
 - `file_system_manager`: configurable filename base address (`$9800` for Magic Desk)
 - `find_ram`: `poweron_pattern_byte` + `clear_poweron_pattern`
+- `Config`: `clear_poweron_ram` flag (default off) + `with_clear_poweron`; converters expose `poweron_cleared()`
 
 ## [2.2.0] - 2026-05-29
 

@@ -11,7 +11,10 @@
 //!   - metadata       @ $9000
 //!   - filenames      @ $9800
 //!
-//! Only the small trampoline lives in C64 RAM (at $0334, like EasyFlash). During
+//! Only the small trampoline lives in C64 RAM. Its address is computed by the
+//! converter with the same mechanism as EasyFlash: auto-placed at $0100 when the
+//! snapshot's stack pointer allows it, otherwise in the cassette buffer at $0334,
+//! with a manual override via the hook-address option. During
 //! a LOAD it banks the directory bank in via $DE00 (bit 7 = 0) and JSRs the
 //! handler at $8400. The handler searches metadata, then for each ROM bank of
 //! the file it calls the RAM-resident `copy_data` routine, which banks the data
@@ -43,9 +46,11 @@ pub const FILENAMES_ADDRESS: u16 = 0x9800;
 /// bank count: bank 0 is always present and always selected on reset.
 pub const DIRECTORY_BANK: u8 = 0;
 
-/// Default trampoline address. Magic Desk must use page 3 (the cassette buffer),
-/// never $0100 — page 1 is occupied by the relocated decompressor during boot and
-/// then rebuilt as the snapshot stack, which would overwrite a trampoline there.
+/// Fallback trampoline address (the cassette buffer) when the caller does not
+/// supply one. Like EasyFlash, the converter normally picks the address from the
+/// snapshot's stack pointer: $0100 when SP >= 242 (page 1 content — including a
+/// trampoline there — is preserved and restored via PatchMem blocks 1-8),
+/// otherwise $0334.
 pub const DEFAULT_TRAMPOLINE_ADDR: u16 = 0x0334;
 
 /// Manages LOAD/SAVE vector hooking for a Magic Desk cartridge file system.
@@ -93,6 +98,8 @@ impl MagicDeskLoadSaveHook {
 load_trampoline:
     STA $93              ; save LOAD/VERIFY flag (KERNAL semantics)
     SEI
+    LDA $01
+    STA port_01_save
 
     ; Copy requested filename to temp area (readable while cart is banked in)
     LDY $B7
@@ -118,7 +125,7 @@ no_filename:
     PHP
     LDA #$80
     STA $DE00            ; bank cartridge OUT (bit 7 = 1)
-    LDA #$37
+    LDA port_01_save
     STA $01
     PLP
     PLA
@@ -185,6 +192,9 @@ copy_done:
     LDA #${dir_bank:02X}
     STA $DE00            ; back to directory bank so handler page stays valid
     RTS
+
+port_01_save:
+    .byte $00
 "#,
             trampoline = self.trampoline_address,
             temp = temp_addr,
@@ -270,14 +280,27 @@ copy_done:
         let trampoline_code = self.generate_trampoline_binary()?;
         let addr = self.trampoline_address as usize;
 
-        // Trampoline + temp filename must fit before page 4 (cassette buffer ends
-        // at $03FF). 16 bytes reserved for the longest legal filename.
-        if addr + trampoline_code.len() + 16 > 0x0400 {
+        // Trampoline + temp filename (16 bytes reserved for the longest legal
+        // filename) must stay inside its page-sized home when placed in the low
+        // fixed areas: page 1 (below the restored stack) or the cassette buffer
+        // (ends at $03FF). Elsewhere only the RAM bounds apply.
+        let end = addr + trampoline_code.len() + 16;
+        if addr < 0x0200 && end > 0x0200 {
+            return Err(format!(
+                "Magic Desk trampoline ({} bytes) does not fit in page 1 at ${:04X}",
+                trampoline_code.len(),
+                self.trampoline_address
+            ));
+        }
+        if (0x0200..0x0400).contains(&addr) && end > 0x0400 {
             return Err(format!(
                 "Magic Desk trampoline ({} bytes) does not fit in the cassette buffer at ${:04X}",
                 trampoline_code.len(),
                 self.trampoline_address
             ));
+        }
+        if end > ram.len() {
+            return Err("Trampoline code exceeds RAM bounds".to_string());
         }
 
         ram[addr..addr + trampoline_code.len()].copy_from_slice(&trampoline_code);

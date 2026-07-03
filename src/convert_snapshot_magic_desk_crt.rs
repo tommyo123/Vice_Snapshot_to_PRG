@@ -44,6 +44,7 @@ const MAX_BANKS: usize = 64;
 pub struct ConvertSnapshotMagicDeskCRT {
     config: CrtConfig,
     extra_ram_blocks: Vec<(u16, u16)>,
+    poweron_cleared: std::cell::Cell<u32>,
 }
 
 impl ConvertSnapshotMagicDeskCRT {
@@ -54,11 +55,18 @@ impl ConvertSnapshotMagicDeskCRT {
     /// Create a new converter with extra RAM blocks
     /// Each block is (address, count)
     pub fn with_extra_blocks(config: CrtConfig, extra_ram_blocks: Vec<(u16, u16)>) -> Self {
-        Self { config, extra_ram_blocks }
+        Self { config, extra_ram_blocks, poweron_cleared: std::cell::Cell::new(0) }
+    }
+
+    /// Bytes zeroed by the power-on pattern pass during the last `convert` call
+    /// (0 if the pass is disabled or nothing matched).
+    pub fn poweron_cleared(&self) -> u32 {
+        self.poweron_cleared.get()
     }
 
     /// Convert a VSF snapshot to a Magic Desk CRT file
     pub fn convert(&self, input_path: &str, output_path: &str) -> Result<(), String> {
+        self.poweron_cleared.set(0);
         if std::path::Path::new(output_path).exists() {
             return Err(format!(
                 "Output file already exists:\n{}\n\nPlease choose a different filename.",
@@ -99,15 +107,31 @@ impl ConvertSnapshotMagicDeskCRT {
             }
         }
 
-        // Automatically clear RAM still holding the C64 power-on pattern so it
+        // Optionally clear RAM still holding the C64 power-on pattern so it
         // becomes usable free space (mirrors the manual "f 0000 ffff 00" step).
-        FindRam::clear_poweron_pattern(&mut ram);
+        self.poweron_cleared.set(if self.config.base_config.clear_poweron_ram {
+            FindRam::clear_poweron_pattern(&mut ram)
+        } else {
+            0
+        });
 
         // Hook the LOAD/SAVE trampoline into RAM BEFORE FindRam/PatchMem so the
         // trampoline area is seen as "used" and never allocated over (matches the
         // EasyFlash converter).
         let mut load_save_hook = if has_files {
-            let mut hook = MagicDeskLoadSaveHook::new(true, None);
+            // Determine trampoline address (same mechanism as EasyFlash)
+            // Auto location: use $100 if SP >= 242, otherwise $334
+            let trampoline_addr = if self.config.auto_location || self.config.trampoline_address.is_none() {
+                if snap.cpu.sp >= 242 {
+                    0x0100 // SP is high enough, safe to use $0100
+                } else {
+                    0x0334 // SP is low, use $0334 to avoid stack collision
+                }
+            } else {
+                self.config.trampoline_address.unwrap_or(0x0100)
+            };
+
+            let mut hook = MagicDeskLoadSaveHook::new(true, Some(trampoline_addr));
             hook.hook_load_and_save(&mut ram[..])
                 .map_err(|e| format!("Failed to hook LOAD/SAVE: {}", e))?;
             Some(hook)

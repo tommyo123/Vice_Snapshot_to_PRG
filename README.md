@@ -44,26 +44,29 @@ reset
 
 This produces large uniform regions that the converter can use for restore code and compressed blocks. Without this, memory becomes fragmented and the converter may fail to allocate space.
 
-### Automatic power-on pattern clearing
+### Power-on pattern clearing (experimental, off by default)
 
 A freshly powered C64 (and VICE's default / Smart Attach RAM init) does not come up
 all-zero — it comes up in a fixed pattern of `$00`/`$FF` bytes in short (4-byte) runs.
 Those runs are too short for the free-area scan, so untouched RAM looks "used".
 
-The converter now detects this power-on pattern and automatically zeroes the regions
-that still hold it (an exact, conservative match — only memory the program never wrote
-is cleared). This recovers that RAM as free space without a manual fill, so snapshots
-taken **without** the `f 0000 ffff 00` step convert far more reliably.
+The converter can optionally detect this power-on pattern and zero the regions that
+still hold it (a strict, byte-exact match over maximal spans of 64+ bytes; program-written
+bytes are never touched, they only split a span). This recovers that RAM as free space
+without a manual fill, so snapshots taken without the `f 0000 ffff 00` step may convert
+more reliably. The number of cleared bytes is reported after each conversion.
 
-Manual clearing is still the most thorough option (it also flattens program-touched
-scratch areas), but is no longer required for the common case.
+**This is highly experimental and off by default.** A misdetected span would zero real
+program data. Enable it via the GUI "Clear power-on RAM pattern" checkbox (which asks
+for confirmation) or the CLI `--clear-poweron-ram` flag, only if you understand the risk.
+
+The manual `f 0000 ffff 00` step remains the reliable way to prepare a snapshot.
 
 ### About Smart Attach
 
-Smart Attach uses VICE's realistic C64-style memory initialization, not a uniform fill.
-The automatic power-on pattern clearing (above) now handles the bulk of this, so Smart
-Attach snapshots usually convert without a manual fill. If a particular snapshot still
-fails to allocate, clear RAM manually (`f 0000 ffff 00`) and retry.
+Smart Attach uses VICE's realistic C64-style memory initialization, not a uniform fill,
+so snapshots taken with it are more likely to need the manual `f 0000 ffff 00` step (or
+the experimental power-on pattern clearing above) before they convert reliably.
 
 ### Stack considerations
 
@@ -103,6 +106,7 @@ If conversion fails due to insufficient free memory, the GUI offers to add RAM b
   hook possible.
 - Minimum 8 banks, maximum 64 banks (512 KB).
 - Can embed PRG files and intercept `LOAD "NAME",8,1`, identical to EasyFlash.
+- Automatically picks trampoline address (`$0100` or `$0334`) based on stack position.
 
 **ROM layout (no embedded files):**
 - **Bank 0 ROML**: Boot code (CBM80) + payload start
@@ -116,9 +120,10 @@ If conversion fails due to insufficient free memory, the GUI offers to add RAM b
 
 Magic Desk has no ROMH, so (unlike EasyFlash, which keeps the handler/metadata in
 ROMH at `$A000–$BFFF`) the directory lives in bank 0. Only a small trampoline sits
-in C64 RAM, in the cassette buffer (`$0334`); during a LOAD it banks the directory
-bank in, copies the requested file straight from ROM, and banks the cartridge back
-out.
+in C64 RAM; its address is picked with the same mechanism as EasyFlash (`$0100` or
+the cassette buffer `$0334`, based on the snapshot's stack pointer, or a manual
+`--hook-addr`). During a LOAD it banks the directory bank in, copies the requested
+file straight from ROM, and banks the cartridge back out.
 
 ## Usage
 
@@ -148,13 +153,14 @@ vice-snapshot-to-prg-converter-cli --magic-desk --include-dir ./prg input.vsf ou
 - `--prg` / `--crt` / `--magic-desk` – Force format (optional, auto-detected from extension for PRG/CRT)
 - `--name <name>` – Cartridge name (max 32 chars, CRT only)
 - `--include-dir <dir>` – Embed PRG files from directory (EasyFlash or Magic Desk)
-- `--hook-addr <hex>` – Override LOAD/SAVE hook address (EasyFlash only; Magic Desk uses a fixed trampoline)
+- `--hook-addr <hex>` – Override LOAD/SAVE hook address (EasyFlash or Magic Desk; overrides the automatic `$0100`/`$0334` placement)
+- `--clear-poweron-ram` – Experimental, off by default: zero RAM regions still holding the C64 power-on pattern (see above)
 
 Output files are overwritten without prompting.
 
 ### GUI
 
-The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type (EasyFlash or Magic Desk) from the dropdown. LOAD/SAVE hooking with an include directory works for both cartridge types; the custom hook-address controls apply to EasyFlash only (Magic Desk uses a fixed trampoline). If conversion fails, a dialog offers to add manual RAM blocks.
+The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type (EasyFlash or Magic Desk) from the dropdown. LOAD/SAVE hooking with an include directory and the hook-address controls (auto location or a manual address) work for both cartridge types. The experimental "Clear power-on RAM pattern" checkbox (off by default, with a confirmation dialog) is available for all output formats. If conversion fails, a dialog offers to add manual RAM blocks.
 
 ### Recommended workflow
 

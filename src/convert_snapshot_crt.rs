@@ -20,6 +20,7 @@ use std::fs;
 pub struct ConvertSnapshotCRT {
     config: CrtConfig,
     extra_ram_blocks: Vec<(u16, u16)>,
+    poweron_cleared: std::cell::Cell<u32>,
 }
 
 impl ConvertSnapshotCRT {
@@ -30,11 +31,18 @@ impl ConvertSnapshotCRT {
     /// Create a new converter with extra RAM blocks
     /// Each block is (address, count)
     pub fn with_extra_blocks(config: CrtConfig, extra_ram_blocks: Vec<(u16, u16)>) -> Self {
-        Self { config, extra_ram_blocks }
+        Self { config, extra_ram_blocks, poweron_cleared: std::cell::Cell::new(0) }
+    }
+
+    /// Bytes zeroed by the power-on pattern pass during the last `convert` call
+    /// (0 if the pass is disabled or nothing matched).
+    pub fn poweron_cleared(&self) -> u32 {
+        self.poweron_cleared.get()
     }
 
     /// Convert a VSF snapshot to an EasyFlash CRT file
     pub fn convert(&self, input_path: &str, output_path: &str) -> Result<(), String> {
+        self.poweron_cleared.set(0);
         if std::path::Path::new(output_path).exists() {
             return Err(format!(
                 "Output file already exists:\n{}\n\nPlease choose a different filename.",
@@ -67,9 +75,13 @@ impl ConvertSnapshotCRT {
             }
         }
 
-        // Automatically clear RAM still holding the C64 power-on pattern so it
+        // Optionally clear RAM still holding the C64 power-on pattern so it
         // becomes usable free space (mirrors the manual "f 0000 ffff 00" step).
-        FindRam::clear_poweron_pattern(&mut ram);
+        self.poweron_cleared.set(if self.config.base_config.clear_poweron_ram {
+            FindRam::clear_poweron_pattern(&mut ram)
+        } else {
+            0
+        });
 
         // Hook LOAD/SAVE trampoline BEFORE PatchMem to prevent allocation conflicts
         let mut load_save_hook = if has_files {

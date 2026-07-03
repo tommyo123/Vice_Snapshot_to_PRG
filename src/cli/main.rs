@@ -28,6 +28,7 @@ struct CliArgs {
     cartridge_name: Option<String>,
     include_dir: Option<String>,
     hook_addr: Option<u16>,
+    clear_poweron_ram: bool,
 }
 
 fn main() {
@@ -81,16 +82,9 @@ fn main() {
             eprintln!();
         }
         if cli_args.hook_addr.is_some() {
-            eprintln!("Warning: --hook-addr is only used with EasyFlash CRT format, ignoring");
+            eprintln!("Warning: --hook-addr is only used with the CRT formats, ignoring");
             eprintln!();
         }
-    }
-
-    // Magic Desk supports --include-dir, but the trampoline location is fixed
-    // (the cassette buffer), so --hook-addr is ignored.
-    if cli_args.format == OutputFormat::MagicDeskCrt && cli_args.hook_addr.is_some() {
-        eprintln!("Warning: --hook-addr is not used with Magic Desk format (fixed trampoline), ignoring");
-        eprintln!();
     }
 
     // Warn if hook-addr used without include-dir
@@ -137,8 +131,12 @@ fn main() {
     if let Some(ref dir) = cli_args.include_dir {
         println!("Include: {}", dir);
     }
+    // Print the hook address only when it is actually honored
+    // (a CRT format with an include dir).
     if let Some(addr) = cli_args.hook_addr {
-        println!("Hook:    ${:04X}", addr);
+        if cli_args.format != OutputFormat::Prg && cli_args.include_dir.is_some() {
+            println!("Hook:    ${:04X}", addr);
+        }
     }
     println!();
     println!("Converting...");
@@ -172,6 +170,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut cartridge_name: Option<String> = None;
     let mut include_dir: Option<String> = None;
     let mut hook_addr: Option<u16> = None;
+    let mut clear_poweron_ram = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -225,6 +224,9 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                     .map_err(|_| format!("Invalid hex address: {}", args[i]))?;
                 hook_addr = Some(addr);
             }
+            "--clear-poweron-ram" => {
+                clear_poweron_ram = true;
+            }
             _ if arg.starts_with('-') => {
                 return Err(format!("Unknown option: {}", arg));
             }
@@ -258,16 +260,30 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         cartridge_name,
         include_dir,
         hook_addr,
+        clear_poweron_ram,
     })
+}
+
+/// Print the result of the power-on RAM pattern pass.
+fn report_poweron_clear(cli_args: &CliArgs, cleared: u32) {
+    if cli_args.clear_poweron_ram {
+        println!("Power-on RAM pattern cleared: {} bytes", cleared);
+    } else {
+        println!("Power-on RAM pattern clearing: off");
+    }
 }
 
 fn convert_prg(cli_args: &CliArgs) -> Result<(), String> {
     let config = Config::auto()
-        .map_err(|e| format!("Failed to initialize: {}", e))?;
+        .map_err(|e| format!("Failed to initialize: {}", e))?
+        .with_clear_poweron(cli_args.clear_poweron_ram);
 
     let work_path = config.work_path.clone();
     let converter = ConvertSnapshot::new(config);
     let result = converter.convert(&cli_args.input_path, &cli_args.output_path);
+    if result.is_ok() {
+        report_poweron_clear(cli_args, converter.poweron_cleared());
+    }
 
     let _ = cleanup_work_dir(&work_path);
     result
@@ -276,6 +292,7 @@ fn convert_prg(cli_args: &CliArgs) -> Result<(), String> {
 fn convert_crt(cli_args: &CliArgs) -> Result<(), String> {
     let mut config = CrtConfig::auto()
         .map_err(|e| format!("Failed to initialize: {}", e))?;
+    config.base_config.clear_poweron_ram = cli_args.clear_poweron_ram;
 
     if let Some(ref name) = cli_args.cartridge_name {
         config = config.with_cartridge_name(name);
@@ -292,6 +309,9 @@ fn convert_crt(cli_args: &CliArgs) -> Result<(), String> {
     let work_path = config.base_config.work_path.clone();
     let converter = ConvertSnapshotCRT::new(config);
     let result = converter.convert(&cli_args.input_path, &cli_args.output_path);
+    if result.is_ok() {
+        report_poweron_clear(cli_args, converter.poweron_cleared());
+    }
 
     let _ = cleanup_work_dir(&work_path);
     result
@@ -300,6 +320,7 @@ fn convert_crt(cli_args: &CliArgs) -> Result<(), String> {
 fn convert_magic_desk_crt(cli_args: &CliArgs) -> Result<(), String> {
     let mut config = CrtConfig::auto()
         .map_err(|e| format!("Failed to initialize: {}", e))?;
+    config.base_config.clear_poweron_ram = cli_args.clear_poweron_ram;
 
     if let Some(ref name) = cli_args.cartridge_name {
         config = config.with_cartridge_name(name);
@@ -309,9 +330,16 @@ fn convert_magic_desk_crt(cli_args: &CliArgs) -> Result<(), String> {
         config = config.with_include_dir(dir);
     }
 
+    if let Some(addr) = cli_args.hook_addr {
+        config = config.with_trampoline_address(addr);
+    }
+
     let work_path = config.base_config.work_path.clone();
     let converter = ConvertSnapshotMagicDeskCRT::new(config);
     let result = converter.convert(&cli_args.input_path, &cli_args.output_path);
+    if result.is_ok() {
+        report_poweron_clear(cli_args, converter.poweron_cleared());
+    }
 
     let _ = cleanup_work_dir(&work_path);
     result
@@ -355,7 +383,13 @@ fn print_usage(program_name: &str) {
     println!("  --magic-desk         Force Magic Desk CRT format output");
     println!("  --name <name>        Cartridge name (CRT only, max 32 chars)");
     println!("  --include-dir <dir>  Include PRG files from directory (EasyFlash or Magic Desk)");
-    println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash only, overrides auto)");
+    println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash or Magic Desk, overrides");
+    println!("                       the automatic placement: $0100 when the snapshot's stack");
+    println!("                       pointer allows it, otherwise $0334)");
+    println!("  --clear-poweron-ram  HIGHLY EXPERIMENTAL, off by default. Zeroes RAM regions");
+    println!("                       still holding the C64 power-on pattern (64+ exact pattern");
+    println!("                       bytes) to create free blocks. Misdetection could lose");
+    println!("                       program data; only enable if you understand the risk");
     println!("  -h, --help           Show this help message");
     println!();
     println!("EXAMPLES:");
@@ -369,6 +403,7 @@ fn print_usage(program_name: &str) {
     println!();
     println!("IMPORTANT:");
     println!("  - Memory MUST be initialized before snapshot (f 0000 ffff 00)");
+    println!("  - --clear-poweron-ram is an experimental alternative; see above");
     println!();
     println!("For more information:");
     println!("  https://github.com/tommyo123/Vice_Snapshot_to_PRG");

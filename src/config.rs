@@ -13,13 +13,24 @@ pub const VERSION: &str = "2.2";
 #[derive(Clone)]
 pub struct Config {
     pub work_path: PathBuf,
+    /// Zero RAM regions still holding the C64 power-on pattern before the
+    /// free-block scan (see `FindRam::clear_poweron_pattern`). Highly
+    /// experimental; default off.
+    pub clear_poweron_ram: bool,
 }
 
 impl Config {
     pub fn new(work_path: impl AsRef<Path>) -> Self {
         Self {
             work_path: work_path.as_ref().to_path_buf(),
+            clear_poweron_ram: false,
         }
+    }
+
+    /// Enable/disable the power-on RAM pattern clearing pass.
+    pub fn with_clear_poweron(mut self, enabled: bool) -> Self {
+        self.clear_poweron_ram = enabled;
+        self
     }
 
     pub fn work_str(&self) -> &str {

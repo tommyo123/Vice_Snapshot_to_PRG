@@ -25,7 +25,7 @@ use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
 use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
 
 const WINDOW_WIDTH: i32 = 720;
-const WINDOW_HEIGHT: i32 = 720;
+const WINDOW_HEIGHT: i32 = 750;
 const MARGIN: i32 = 25;
 const FIELD_HEIGHT: i32 = 35;
 const BUTTON_HEIGHT: i32 = 40;
@@ -260,6 +260,17 @@ fn main() {
 
     y_pos += TAB_HEIGHT + 10;
 
+    // Shared option (all output formats): zero RAM regions still holding the
+    // C64 power-on pattern so they become usable free blocks. Highly
+    // experimental and off by default; confirmed via a dialog when enabled.
+    let clear_poweron_check = CheckButton::default()
+        .with_pos(MARGIN, y_pos)
+        .with_size(WINDOW_WIDTH - 2 * MARGIN, 25)
+        .with_label("Clear power-on RAM pattern (HIGHLY EXPERIMENTAL, may lose data)");
+    clear_poweron_check.set_checked(false);
+
+    y_pos += 30;
+
     // Status display (shared)
     let mut status_label = Frame::default()
         .with_pos(MARGIN, y_pos)
@@ -321,8 +332,31 @@ fn main() {
     let crt_addr_field_rc = Rc::new(RefCell::new(crt_addr_field.clone()));
     let crt_include_field_rc = Rc::new(RefCell::new(crt_include_field.clone()));
     let crt_include_btn_rc = Rc::new(RefCell::new(crt_include_btn.clone()));
+    let clear_poweron_check_rc = Rc::new(RefCell::new(clear_poweron_check.clone()));
     let status_buffer_rc = Rc::new(RefCell::new(status_buffer));
     let tabs_rc = Rc::new(RefCell::new(tabs.clone()));
+
+    // Confirm before enabling the experimental power-on RAM clearing pass;
+    // decline leaves it unchecked.
+    {
+        let check = clear_poweron_check_rc.clone();
+        clear_poweron_check.clone().set_callback(move |c| {
+            if c.is_checked() {
+                let choice = dialog::choice2_default(
+                    "Clear power-on RAM pattern is HIGHLY EXPERIMENTAL.\n\n\
+                     It zeroes RAM regions it believes are untouched power-on \
+                     RAM. A misdetection could destroy program data in the \
+                     converted output.\n\nAre you sure you want to enable it?",
+                    "Cancel",
+                    "Enable",
+                    "",
+                );
+                if choice != Some(1) {
+                    check.borrow_mut().set_checked(false);
+                }
+            }
+        });
+    }
 
     // Extra RAM blocks for allocation failures (shared between PRG and CRT)
     // Each block is (address, count) - cleared on snapshot change or tab switch
@@ -330,21 +364,25 @@ fn main() {
 
     // CRT cartridge type callback
     //
-    // Both EasyFlash and Magic Desk support LOAD/SAVE hooking with embedded PRG
-    // files. Magic Desk uses a fixed trampoline location (the cassette buffer),
-    // so the custom-address controls don't apply to it and are disabled; their
-    // values are ignored by the Magic Desk converter regardless.
+    // EasyFlash and Magic Desk both support LOAD/SAVE hooking with embedded PRG
+    // files and share the same trampoline placement mechanism (auto from the
+    // snapshot's stack pointer, or a manual address), so the hook controls
+    // simply follow the hook checkbox for both types.
     {
         let hook_check = crt_hook_check_rc.clone();
         let auto_location_check = crt_auto_location_check_rc.clone();
         let addr_field = crt_addr_field_rc.clone();
 
-        crt_type_choice.clone().set_callback(move |choice| {
-            let is_magic_desk = choice.value() == 1;
-            // Hook + include directory are available for both cartridge types.
+        crt_type_choice.clone().set_callback(move |_choice| {
             hook_check.borrow_mut().activate();
-            if is_magic_desk {
-                // Trampoline address is fixed for Magic Desk.
+            if hook_check.borrow().is_checked() {
+                auto_location_check.borrow_mut().activate();
+                if auto_location_check.borrow().is_checked() {
+                    addr_field.borrow_mut().deactivate();
+                } else {
+                    addr_field.borrow_mut().activate();
+                }
+            } else {
                 auto_location_check.borrow_mut().deactivate();
                 addr_field.borrow_mut().deactivate();
             }
@@ -593,6 +631,7 @@ fn main() {
         let crt_auto_location = crt_auto_location_check_rc.clone();
         let crt_addr = crt_addr_field_rc.clone();
         let crt_include = crt_include_field_rc.clone();
+        let clear_poweron = clear_poweron_check_rc.clone();
         let status_buffer = status_buffer_rc.clone();
         let tabs = tabs_rc.clone();
         let extra_blocks = extra_ram_blocks_rc.clone();
@@ -614,6 +653,7 @@ fn main() {
                 let auto_location = crt_auto_location.borrow().is_checked();
                 let addr_text = crt_addr.borrow().value();
                 let include_dir = crt_include.borrow().value();
+                let clear_poweron_ram = clear_poweron.borrow().is_checked();
                 let cart_type_name = if is_magic_desk { "Magic Desk" } else { "EasyFlash" };
 
                 if input_path.is_empty() {
@@ -684,6 +724,7 @@ fn main() {
                     app::awake();
 
                     let result = CrtConfig::auto().map_err(|e| e.to_string()).and_then(|mut config| {
+                        config.base_config.clear_poweron_ram = clear_poweron_ram;
                         if !cart_name.is_empty() {
                             config.cartridge_name = Some(cart_name.clone());
                         }
@@ -707,26 +748,36 @@ fn main() {
                         }
 
                         let work_path = config.base_config.work_path.clone();
-                        let conversion_result = if is_magic_desk {
+                        let (conversion_result, poweron_cleared) = if is_magic_desk {
                             let converter = ConvertSnapshotMagicDeskCRT::with_extra_blocks(config, current_blocks);
-                            converter.convert(&input_path, &output_path)
+                            let r = converter.convert(&input_path, &output_path);
+                            (r, converter.poweron_cleared())
                         } else {
                             let converter = ConvertSnapshotCRT::with_extra_blocks(config, current_blocks);
-                            converter.convert(&input_path, &output_path)
+                            let r = converter.convert(&input_path, &output_path);
+                            (r, converter.poweron_cleared())
                         };
 
                         let _ = cleanup_work_dir(&work_path);
-                        conversion_result
+                        conversion_result.map(|_| poweron_cleared)
                     });
 
                     match result {
-                        Ok(()) => {
+                        Ok(poweron_cleared) => {
                             // Success - clear extra blocks
                             extra_blocks.borrow_mut().clear();
-                            let success_msg = format!(
+                            let mut success_msg = format!(
                                 "Success!\n\nSnapshot successfully converted to {} CRT:\n{}",
                                 cart_type_name, output_path
                             );
+                            if clear_poweron_ram {
+                                success_msg.push_str(&format!(
+                                    "\n\nPower-on RAM pattern cleared: {} bytes",
+                                    poweron_cleared
+                                ));
+                            } else {
+                                success_msg.push_str("\n\nPower-on RAM pattern clearing: off");
+                            }
                             status_buffer.borrow_mut().set_text(&success_msg);
                             break;
                         }
@@ -829,18 +880,21 @@ fn main() {
                     app::awake();
 
                     let config_result = Config::auto();
+                    let clear_poweron_ram = clear_poweron.borrow().is_checked();
 
                     let result = match config_result {
-                        Ok(config) => {
+                        Ok(mut config) => {
+                            config.clear_poweron_ram = clear_poweron_ram;
                             let work_path = config.work_path.clone();
 
                             let converter = ConvertSnapshot::with_extra_blocks(config, current_blocks);
                             let conversion_result = converter.convert(&input_path, &output_path);
+                            let poweron_cleared = converter.poweron_cleared();
 
                             let cleanup_result = cleanup_work_dir(&work_path);
 
                             match (conversion_result, cleanup_result) {
-                                (Ok(()), Ok(())) => Ok(()),
+                                (Ok(()), Ok(())) => Ok(poweron_cleared),
                                 (Ok(()), Err(cleanup_err)) => {
                                     Err(format!("Conversion succeeded, but failed to clean up temporary directory:\n{}", cleanup_err))
                                 },
@@ -852,13 +906,21 @@ fn main() {
                     };
 
                     match result {
-                        Ok(()) => {
+                        Ok(poweron_cleared) => {
                             // Success - clear extra blocks
                             extra_blocks.borrow_mut().clear();
-                            let success_msg = format!(
+                            let mut success_msg = format!(
                                 "Success!\n\nSnapshot image successfully converted to:\n{}",
                                 output_path
                             );
+                            if clear_poweron_ram {
+                                success_msg.push_str(&format!(
+                                    "\n\nPower-on RAM pattern cleared: {} bytes",
+                                    poweron_cleared
+                                ));
+                            } else {
+                                success_msg.push_str("\n\nPower-on RAM pattern clearing: off");
+                            }
                             status_buffer.borrow_mut().set_text(&success_msg);
                             break;
                         }
@@ -1111,15 +1173,19 @@ EasyFlash:
 
 Magic Desk:
 - 8K cart mode: ROML only ($8000-$9FFF)
-- CBM80 boot, permanent kill via $DE00 bit 7
-- No LOAD/SAVE hooking (use EasyFlash for that)
+- CBM80 boot; $DE00 bit 7 banks the cart out (reversible)
+- Optional LOAD/SAVE hooking for embedded PRG files
 
-LOAD/SAVE Hooking (EasyFlash only):
+LOAD/SAVE Hooking (EasyFlash and Magic Desk):
 When enabled, you can embed PRG files that can be loaded:
   LOAD "FILENAME",8,1
 
 The cartridge intercepts KERNAL LOAD/SAVE vectors and serves
-files from ROM banks instead of disk.
+files from ROM banks instead of disk. The small trampoline in
+C64 RAM is auto-placed from the snapshot's stack pointer
+($0100 when the stack allows it, otherwise the cassette
+buffer at $0334); uncheck "Auto location" to set the address
+manually.
 
 ===============================================================
 
@@ -1142,6 +1208,23 @@ QUICK START
 
 ===============================================================
 
+CLEAR POWER-ON RAM PATTERN (EXPERIMENTAL, OFF BY DEFAULT)
+
+A freshly powered C64 (and VICE's default RAM init) holds a
+fixed $00/$FF pattern, not zeros. Untouched pattern RAM looks
+"used" to the free-block scan, which can cause allocation
+failures. When enabled, regions still holding the exact
+power-on pattern (64+ bytes) are zeroed and become usable free
+space - automating the manual "f 0000 ffff 00" step for
+snapshots taken without it.
+
+This is HIGHLY EXPERIMENTAL: a misdetection could zero real
+program data. It is off by default and asks for confirmation
+when enabled. The manual "f 0000 ffff 00" step remains the
+reliable way to prepare a snapshot.
+
+===============================================================
+
 MANUAL RAM BLOCKS
 
 If conversion fails due to insufficient free memory, you can
@@ -1158,6 +1241,8 @@ IMPORTANT LIMITATIONS
 
 - Memory MUST be initialized before snapshot (f 0000 ffff 00)
 - Do NOT use "Smart attach..." feature in VICE
+- "Clear power-on RAM pattern" is an experimental, opt-in
+  alternative to the above; see the section above
 "#, VERSION);
 
     let mut text_buffer = TextBuffer::default();
