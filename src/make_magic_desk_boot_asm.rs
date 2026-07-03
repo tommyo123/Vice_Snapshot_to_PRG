@@ -13,11 +13,21 @@ use crate::asm_wrapper::assemble_to_bytes;
 /// Generates code at $8000 with CBM80 signature that boots the restore process
 pub struct MakeMagicDeskBootAsm {
     restore_code_size: usize,
+    /// The ROM bank where the restore payload (restore code + decompressor +
+    /// RAM.lzsa) begins. 0 for plain snapshots (payload follows the boot code in
+    /// bank 0). 1 when files are embedded — bank 0 is then reserved for the boot
+    /// code plus the LOAD directory (handler/metadata/filenames).
+    restore_start_bank: usize,
 }
 
 impl MakeMagicDeskBootAsm {
     pub fn new(restore_code_size: usize) -> Self {
-        Self { restore_code_size }
+        Self { restore_code_size, restore_start_bank: 0 }
+    }
+
+    /// Create a boot generator whose restore payload starts at the given bank.
+    pub fn with_restore_start_bank(restore_code_size: usize, restore_start_bank: usize) -> Self {
+        Self { restore_code_size, restore_start_bank }
     }
 
     /// Generate complete boot code binary (placed at offset 0 in bank 0 ROML)
@@ -114,10 +124,13 @@ TRAMPOLINE_SIZE = trampoline_end - trampoline_code
             );
         }
 
-        format!(
-            r#"    ; Trampoline @ $0100 (MINIMAL - copy restore code from ROML to $0340)
-
-    ; Select bank 0 via $DE00 (I/O already enabled from boot code)
+        // Bank select + source pointer for the restore code.
+        // - restore_start_bank == 0: payload follows the boot code in bank 0, so
+        //   the source pointer is the `trampoline_end` label.
+        // - restore_start_bank == 1: bank 0 is the directory bank; the restore
+        //   payload lives in bank 1 starting at $8000.
+        let bank_and_source = if self.restore_start_bank == 0 {
+            r#"    ; Select bank 0 via $DE00 (I/O already enabled from boot code)
     LDA #$00
     STA $DE00
     STA $F7           ; Bank counter in $F7
@@ -126,16 +139,35 @@ TRAMPOLINE_SIZE = trampoline_end - trampoline_code
     LDA #$33
     STA $01
 
-    ; =============================================================================
-    ; Copy restore code from ROML to RAM $0340
-    ; Source: ROML bank 0, starting after boot code (address set by labels)
-    ; =============================================================================
-
-    ; Source pointer: payload starts right after boot code
+    ; Source pointer: payload starts right after boot code in bank 0
     LDA #>trampoline_end
     STA $FC
     LDA #<trampoline_end
-    STA $FB
+    STA $FB"#.to_string()
+        } else {
+            format!(
+                r#"    ; Select restore bank via $DE00 (I/O already enabled from boot code)
+    LDA #${:02X}
+    STA $DE00
+    STA $F7           ; Bank counter in $F7
+
+    ; Switch to ROML+RAM mode (ROML visible for reads, RAM for writes)
+    LDA #$33
+    STA $01
+
+    ; Source pointer: restore payload starts at $8000 of the restore bank
+    LDA #$80
+    STA $FC
+    LDA #$00
+    STA $FB"#,
+                self.restore_start_bank
+            )
+        };
+
+        format!(
+            r#"    ; Trampoline @ $0100 (MINIMAL - copy restore code from ROML to $0340)
+
+{}
 
     ; Destination: $0340
     LDA #$03
@@ -181,7 +213,7 @@ no_bank_switch:
 restore_done:
     ; Jump to main restore code in RAM @ $0340
     JMP $0340"#,
-            pages
+            bank_and_source, pages
         )
     }
 }

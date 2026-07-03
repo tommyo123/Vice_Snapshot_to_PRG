@@ -67,6 +67,10 @@ impl ConvertSnapshotCRT {
             }
         }
 
+        // Automatically clear RAM still holding the C64 power-on pattern so it
+        // becomes usable free space (mirrors the manual "f 0000 ffff 00" step).
+        FindRam::clear_poweron_pattern(&mut ram);
+
         // Hook LOAD/SAVE trampoline BEFORE PatchMem to prevent allocation conflicts
         let mut load_save_hook = if has_files {
             // Determine trampoline address

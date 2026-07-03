@@ -121,6 +121,78 @@ impl FindRam {
         }
     }
 
+    /// Expected byte of the C64 power-on RAM pattern at `addr`.
+    ///
+    /// A freshly powered C64 (and VICE's default/Smart-Attach RAM init) does not
+    /// come up all-zero; it comes up in a fixed pattern of $00 and $FF bytes.
+    /// Empirically (VICE 3.10) the pattern is: 4-byte runs of $00 or $FF that
+    /// alternate (phase offset by 2 bytes) and invert every 8 KB, e.g.
+    ///
+    /// ```text
+    /// $2000: 00 00 FF FF FF FF 00 00  00 00 FF FF FF FF 00 00 ...
+    /// $4000: FF FF 00 00 00 00 FF FF  ...   (inverted in the next 8 KB block)
+    /// ```
+    ///
+    /// which is `start $FF  XOR  (run-of-4, +2 phase)  XOR  (invert every 8 KB)`.
+    /// Because the runs are only 4 bytes long they fall below the 32-byte
+    /// threshold of the free-block scan, so such memory looks "used" even though
+    /// the program never touched it. See [`clear_poweron_pattern`].
+    pub fn poweron_pattern_byte(addr: u16) -> u8 {
+        let a = addr as u32;
+        let mut v: u8 = 0xFF; // start value
+        if (((a + 2) / 4) & 1) != 0 {
+            v ^= 0xFF; // 4-byte value run, phase-shifted by 2
+        }
+        if ((a / 8192) & 1) != 0 {
+            v ^= 0xFF; // whole 8 KB block inverted
+        }
+        v
+    }
+
+    /// Zero every region of RAM that still holds the C64 power-on pattern.
+    ///
+    /// This automates, for the common case, the manual "clear RAM" step the tool
+    /// otherwise asks for (`f 0000 ffff 00` in the VICE monitor): regions left in
+    /// their power-on state are RAM the program never used, so zeroing them is
+    /// safe and turns them into large uniform blocks the allocator can use (and
+    /// which compress to almost nothing).
+    ///
+    /// Detection is a strict match against [`poweron_pattern_byte`] over the same
+    /// $0200-$FFEF range the free scan uses. Only maximal matching spans of at
+    /// least [`MIN_PATTERN_SPAN`] bytes are cleared, so:
+    /// - the ~1% sparse random bytes VICE sprinkles in simply split the pattern
+    ///   into (still long) spans, and
+    /// - real program data — which would have to reproduce the exact global phase
+    ///   for 64+ contiguous bytes — is left untouched. A wrong guess at the
+    ///   pattern can therefore only fail to clear; it can never corrupt data.
+    ///
+    /// Returns the number of bytes cleared.
+    pub fn clear_poweron_pattern(ram: &mut [u8; 65536]) -> u32 {
+        const START: usize = 0x0200;
+        const END: usize = 0xFFEF; // inclusive, matches the free-block scan range
+        const MIN_PATTERN_SPAN: usize = 64;
+
+        let mut cleared = 0u32;
+        let mut addr = START;
+        while addr <= END {
+            if ram[addr] == Self::poweron_pattern_byte(addr as u16) {
+                let span_start = addr;
+                while addr <= END && ram[addr] == Self::poweron_pattern_byte(addr as u16) {
+                    addr += 1;
+                }
+                if addr - span_start >= MIN_PATTERN_SPAN {
+                    for b in &mut ram[span_start..addr] {
+                        *b = 0;
+                    }
+                    cleared += (addr - span_start) as u32;
+                }
+            } else {
+                addr += 1;
+            }
+        }
+        cleared
+    }
+
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
@@ -138,9 +210,20 @@ impl FindRam {
 mod tests {
     use super::*;
 
+    /// A 64 KB background with no run of 32+ identical bytes, so the scan only
+    /// reports the sequences a test explicitly plants (real RAM is never a single
+    /// uniform value the way `[0u8; 65536]` is).
+    fn varied_ram() -> [u8; 65536] {
+        let mut ram = [0u8; 65536];
+        for (i, b) in ram.iter_mut().enumerate() {
+            *b = i as u8;
+        }
+        ram
+    }
+
     #[test]
     fn test_find_sequences() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // Create a sequence of 64 zeros at $2500
         for i in 0x2500..0x2540 {
@@ -168,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_allocate_exact_match() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // 32 zeros at $2500
         for i in 0x2500..0x2520 {
@@ -187,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_allocate_partial() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // 64 zeros at $5000
         for i in 0x5000..0x5040 {
@@ -209,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_allocate_best_fit() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // 100 zeros at $2000
         for i in 0x2000..0x2064 {
@@ -233,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_allocate_not_found() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // Only 32 zeros available
         for i in 0x2500..0x2520 {
@@ -249,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_ignores_area_below_0x200() {
-        let mut ram = [0u8; 65536];
+        let mut ram = varied_ram();
 
         // Fill entire zero page and stack with zeros (should be ignored)
         for i in 0x0000..0x0200 {
@@ -260,5 +343,63 @@ mod tests {
 
         // Should find nothing below $0200
         assert_eq!(finder.block_count(), 0);
+    }
+
+    #[test]
+    fn poweron_pattern_matches_observed_vice_bytes() {
+        // Bytes observed in a fresh VICE 3.10 C64 boot.
+        assert_eq!(FindRam::poweron_pattern_byte(0x2000), 0x00);
+        assert_eq!(FindRam::poweron_pattern_byte(0x2001), 0x00);
+        assert_eq!(FindRam::poweron_pattern_byte(0x2002), 0xFF);
+        assert_eq!(FindRam::poweron_pattern_byte(0x2005), 0xFF);
+        assert_eq!(FindRam::poweron_pattern_byte(0x2006), 0x00);
+        assert_eq!(FindRam::poweron_pattern_byte(0x4000), 0xFF);
+        assert_eq!(FindRam::poweron_pattern_byte(0x4002), 0x00);
+        assert_eq!(FindRam::poweron_pattern_byte(0xC000), 0xFF);
+    }
+
+    #[test]
+    fn clears_poweron_pattern_but_not_program_data() {
+        let mut ram = [0u8; 65536];
+        // A real pattern region (with a couple of sparse anomalies, as VICE does).
+        for a in 0x2000..0x3000 {
+            ram[a] = FindRam::poweron_pattern_byte(a as u16);
+        }
+        ram[0x2480] = 0x08; // isolated random byte
+        ram[0x2503] = 0x42;
+        // Program data that must NOT be mistaken for the pattern:
+        for a in 0x4000..0x4100 {
+            ram[a] = 0xAB; // arbitrary
+        }
+        for a in 0x5000..0x5100 {
+            ram[a] = 0xFF; // solid $FF (free, but not the alternating pattern)
+        }
+
+        let cleared = FindRam::clear_poweron_pattern(&mut ram);
+
+        // Most of the 4 KB pattern region is zeroed.
+        assert!(cleared > 0x0E00, "cleared only {cleared} bytes");
+        assert_eq!(ram[0x2800], 0);
+        assert_eq!(ram[0x2002], 0);
+        // Program data is untouched.
+        assert_eq!(ram[0x4080], 0xAB);
+        assert_eq!(ram[0x5080], 0xFF);
+        // After clearing, the region is a large free block the scan can use.
+        let finder = FindRam::new(&ram);
+        assert!(finder.find_max() >= 0x0800);
+    }
+
+    #[test]
+    fn poweron_clear_leaves_uninitialized_short_runs_alone() {
+        // A region that is NOT the pattern (all $00 program data) yields no
+        // pattern match longer than the 4-byte pattern phase, so nothing is
+        // cleared by the pattern pass (the normal scan handles all-$00 anyway).
+        let mut ram = [0u8; 65536];
+        for a in 0x6000..0x6100 {
+            ram[a] = 0x55; // not $00/$FF at all
+        }
+        let cleared = FindRam::clear_poweron_pattern(&mut ram);
+        assert_eq!(cleared, 0);
+        assert_eq!(ram[0x6080], 0x55);
     }
 }

@@ -86,16 +86,11 @@ fn main() {
         }
     }
 
-    // Warn if LOAD/SAVE options used with Magic Desk
-    if cli_args.format == OutputFormat::MagicDeskCrt {
-        if cli_args.include_dir.is_some() {
-            eprintln!("Warning: --include-dir is not supported with Magic Desk format, ignoring");
-            eprintln!();
-        }
-        if cli_args.hook_addr.is_some() {
-            eprintln!("Warning: --hook-addr is not supported with Magic Desk format, ignoring");
-            eprintln!();
-        }
+    // Magic Desk supports --include-dir, but the trampoline location is fixed
+    // (the cassette buffer), so --hook-addr is ignored.
+    if cli_args.format == OutputFormat::MagicDeskCrt && cli_args.hook_addr.is_some() {
+        eprintln!("Warning: --hook-addr is not used with Magic Desk format (fixed trampoline), ignoring");
+        eprintln!();
     }
 
     // Warn if hook-addr used without include-dir
@@ -310,6 +305,10 @@ fn convert_magic_desk_crt(cli_args: &CliArgs) -> Result<(), String> {
         config = config.with_cartridge_name(name);
     }
 
+    if let Some(ref dir) = cli_args.include_dir {
+        config = config.with_include_dir(dir);
+    }
+
     let work_path = config.base_config.work_path.clone();
     let converter = ConvertSnapshotMagicDeskCRT::new(config);
     let result = converter.convert(&cli_args.input_path, &cli_args.output_path);
@@ -355,7 +354,7 @@ fn print_usage(program_name: &str) {
     println!("  --crt                Force EasyFlash CRT format output");
     println!("  --magic-desk         Force Magic Desk CRT format output");
     println!("  --name <name>        Cartridge name (CRT only, max 32 chars)");
-    println!("  --include-dir <dir>  Include PRG files from directory (EasyFlash only)");
+    println!("  --include-dir <dir>  Include PRG files from directory (EasyFlash or Magic Desk)");
     println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash only, overrides auto)");
     println!("  -h, --help           Show this help message");
     println!();
@@ -366,6 +365,7 @@ fn print_usage(program_name: &str) {
     println!("  {} --crt --include-dir ./files snapshot.vsf game.crt", name);
     println!("  {} --crt --include-dir ./files --hook-addr $0334 snapshot.vsf game.crt", name);
     println!("  {} --magic-desk --name \"My Game\" snapshot.vsf game.crt", name);
+    println!("  {} --magic-desk --include-dir ./files snapshot.vsf game.crt", name);
     println!();
     println!("IMPORTANT:");
     println!("  - Memory MUST be initialized before snapshot (f 0000 ffff 00)");
