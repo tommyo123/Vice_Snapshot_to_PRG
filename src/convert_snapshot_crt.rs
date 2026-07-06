@@ -14,6 +14,7 @@ use crate::load_save_hook::LoadSaveHook;
 use crate::make_crt_asm::MakeCRTAsm;
 use crate::make_romh_asm::MakeROMHAsm;
 use crate::parse_vsf::{C64Mem, C64Snapshot, ParseVSF};
+use crate::parse_ar;
 use crate::patch_mem::PatchMem;
 use std::fs;
 
@@ -43,6 +44,12 @@ impl ConvertSnapshotCRT {
     /// Convert a VSF snapshot to an EasyFlash CRT file
     pub fn convert(&self, input_path: &str, output_path: &str) -> Result<(), String> {
         self.poweron_cleared.set(0);
+        if crate::util::paths_refer_to_same_file(input_path, output_path) {
+            return Err(format!(
+                "Refusing to overwrite the input file:\n{}\n\nPlease choose a different output filename.",
+                input_path
+            ));
+        }
         if std::path::Path::new(output_path).exists() {
             return Err(format!(
                 "Output file already exists:\n{}\n\nPlease choose a different filename.",
@@ -50,13 +57,26 @@ impl ConvertSnapshotCRT {
             ));
         }
 
-        // Parse the VSF file
-        let parser = ParseVSF::import(input_path, &self.config.base_config)
-            .map_err(|e| format!("Failed to read VSF file: {}", e))?;
+        // Parse the input: either a VICE VSF snapshot or a self-restoring freezer
+        // image (Action Replay etc.), decoded by replaying its own restore stub.
+        let input_bytes = fs::read(input_path)
+            .map_err(|e| format!("Failed to read input file: {}", e))?;
 
-        let snap = parser
-            .parse_import()
-            .map_err(|e| format!("Failed to parse VSF: {}", e))?;
+        let (parser, snap) = match parse_ar::resolve_input(input_path, &input_bytes, self.config.base_config.input_mode)
+            .map_err(|e| format!("Failed to decode freezer snapshot: {}", e))?
+        {
+            parse_ar::FreezeOutcome::Freeze(snap) => {
+                (ParseVSF::for_external_snapshot(input_path, &self.config.base_config), snap)
+            }
+            parse_ar::FreezeOutcome::Vsf => {
+                let parser = ParseVSF::import(input_path, &self.config.base_config)
+                    .map_err(|e| parse_ar::vsf_hint(e, &input_bytes))?;
+                let snap = parser
+                    .parse_import()
+                    .map_err(|e| parse_ar::vsf_hint(e, &input_bytes))?;
+                (parser, snap)
+            }
+        };
 
         // Preserve $F8-$FF before any patching
         let mut f8_ff_data = [0u8; 8];

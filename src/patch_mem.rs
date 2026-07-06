@@ -426,6 +426,12 @@ impl PatchMem {
         code.extend_from_slice(&[0xA2, snap.cpu.x]);
         code.extend_from_slice(&[0xA0, snap.cpu.y]);
 
+        // Restore A LAST, right before RTI. The earlier `LDA #A` in block 10 is
+        // clobbered by all the LDA-based I/O restores above, so without this the
+        // program would resume with A = snap.cpu.p. The RTI pulls P/PC from the
+        // stack frame pushed above, so this LDA's N/Z flags are discarded.
+        code.extend_from_slice(&[0xA9, snap.cpu.a]);
+
         code.push(0x40);
 
         Ok(code)

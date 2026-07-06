@@ -9,10 +9,11 @@ use std::env;
 use std::path::Path;
 use std::process;
 
-use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION};
+use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION, InputMode, FreezeMethod};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
 use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
+use vice_snapshot_to_prg_converter::util::paths_refer_to_same_file;
 
 #[derive(Debug, PartialEq)]
 enum OutputFormat {
@@ -28,6 +29,7 @@ struct CliArgs {
     cartridge_name: Option<String>,
     include_dir: Option<String>,
     hook_addr: Option<u16>,
+    input_mode: InputMode,
     clear_poweron_ram: bool,
 }
 
@@ -56,7 +58,9 @@ fn main() {
         process::exit(1);
     }
 
-    if !cli_args.input_path.to_lowercase().ends_with(".vsf") {
+    if !cli_args.input_path.to_lowercase().ends_with(".vsf")
+        && !matches!(cli_args.input_mode, InputMode::Freeze(_))
+    {
         eprintln!("Warning: Input file does not have .vsf extension");
         eprintln!();
     }
@@ -104,6 +108,16 @@ fn main() {
             eprintln!("Error: Include path is not a directory: {}", dir);
             process::exit(1);
         }
+    }
+
+    // Never let the output clobber the source file.
+    if paths_refer_to_same_file(&cli_args.input_path, &cli_args.output_path) {
+        eprintln!(
+            "Error: Output file is the same as the input file: {}",
+            cli_args.input_path
+        );
+        eprintln!("Choose a different output filename so the source is not overwritten.");
+        process::exit(1);
     }
 
     // Handle existing output file
@@ -170,6 +184,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut cartridge_name: Option<String> = None;
     let mut include_dir: Option<String> = None;
     let mut hook_addr: Option<u16> = None;
+    let mut input_mode: Option<InputMode> = None;
     let mut clear_poweron_ram = false;
     let mut positional: Vec<String> = Vec::new();
 
@@ -224,6 +239,34 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
                     .map_err(|_| format!("Invalid hex address: {}", args[i]))?;
                 hook_addr = Some(addr);
             }
+            "--vsf" => {
+                if input_mode.is_some() {
+                    return Err("Cannot combine --vsf and --freezer".to_string());
+                }
+                input_mode = Some(InputMode::Vsf);
+            }
+            "--freezer" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--freezer requires a value (auto|ar|isepic|fc3)".to_string());
+                }
+                if input_mode.is_some() {
+                    return Err("Cannot combine --vsf and --freezer".to_string());
+                }
+                let method = match args[i].to_lowercase().as_str() {
+                    "auto" => FreezeMethod::Auto,
+                    "ar" | "self" | "ss5" | "fm" | "expert" => FreezeMethod::SelfRestoring,
+                    "isepic" => FreezeMethod::Isepic,
+                    "fc3" => FreezeMethod::Fc3,
+                    other => {
+                        return Err(format!(
+                            "Unknown --freezer value '{}' (use auto|ar|isepic|fc3)",
+                            other
+                        ))
+                    }
+                };
+                input_mode = Some(InputMode::Freeze(method));
+            }
             "--clear-poweron-ram" => {
                 clear_poweron_ram = true;
             }
@@ -260,6 +303,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         cartridge_name,
         include_dir,
         hook_addr,
+        input_mode: input_mode.unwrap_or(InputMode::Auto),
         clear_poweron_ram,
     })
 }
@@ -274,9 +318,10 @@ fn report_poweron_clear(cli_args: &CliArgs, cleared: u32) {
 }
 
 fn convert_prg(cli_args: &CliArgs) -> Result<(), String> {
-    let config = Config::auto()
+    let mut config = Config::auto()
         .map_err(|e| format!("Failed to initialize: {}", e))?
         .with_clear_poweron(cli_args.clear_poweron_ram);
+    config.input_mode = cli_args.input_mode;
 
     let work_path = config.work_path.clone();
     let converter = ConvertSnapshot::new(config);
@@ -292,6 +337,7 @@ fn convert_prg(cli_args: &CliArgs) -> Result<(), String> {
 fn convert_crt(cli_args: &CliArgs) -> Result<(), String> {
     let mut config = CrtConfig::auto()
         .map_err(|e| format!("Failed to initialize: {}", e))?;
+    config.base_config.input_mode = cli_args.input_mode;
     config.base_config.clear_poweron_ram = cli_args.clear_poweron_ram;
 
     if let Some(ref name) = cli_args.cartridge_name {
@@ -320,6 +366,7 @@ fn convert_crt(cli_args: &CliArgs) -> Result<(), String> {
 fn convert_magic_desk_crt(cli_args: &CliArgs) -> Result<(), String> {
     let mut config = CrtConfig::auto()
         .map_err(|e| format!("Failed to initialize: {}", e))?;
+    config.base_config.input_mode = cli_args.input_mode;
     config.base_config.clear_poweron_ram = cli_args.clear_poweron_ram;
 
     if let Some(ref name) = cli_args.cartridge_name {
@@ -386,6 +433,13 @@ fn print_usage(program_name: &str) {
     println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash or Magic Desk, overrides");
     println!("                       the automatic placement: $0100 when the snapshot's stack");
     println!("                       pointer allows it, otherwise $0334)");
+    println!("  --vsf                Force VSF snapshot input (do not treat as a freeze)");
+    println!("  --freezer <type>     Convert a cartridge freeze; type = auto|ar|isepic|fc3");
+    println!("                         auto   = detect the freezer automatically");
+    println!("                         ar     = Action Replay / Super Snapshot 5 / Freeze Machine / Expert");
+    println!("                         isepic = ISEPIC (feed the '-name' data file)");
+    println!("                         fc3    = Final Cartridge III (feed 'fc'; '-fc' auto-found)");
+    println!("                       (default: auto-detect freeze, else VSF)");
     println!("  --clear-poweron-ram  HIGHLY EXPERIMENTAL, off by default. Zeroes RAM regions");
     println!("                       still holding the C64 power-on pattern (64+ exact pattern");
     println!("                       bytes) to create free blocks. Misdetection could lose");
@@ -400,6 +454,8 @@ fn print_usage(program_name: &str) {
     println!("  {} --crt --include-dir ./files --hook-addr $0334 snapshot.vsf game.crt", name);
     println!("  {} --magic-desk --name \"My Game\" snapshot.vsf game.crt", name);
     println!("  {} --magic-desk --include-dir ./files snapshot.vsf game.crt", name);
+    println!("  {} --freezer ar  freeze.prg out.prg            (force Action Replay family)", name);
+    println!("  {} --freezer fc3 fc.prg out.crt --crt          (Final Cartridge III freeze)", name);
     println!();
     println!("IMPORTANT:");
     println!("  - Memory MUST be initialized before snapshot (f 0000 ffff 00)");

@@ -17,21 +17,63 @@ use fltk::text::{TextBuffer, TextDisplay};
 use fltk::window::Window;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION};
+use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION, InputMode, FreezeMethod};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
 use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
+use vice_snapshot_to_prg_converter::util::paths_refer_to_same_file;
 
 const WINDOW_WIDTH: i32 = 720;
-const WINDOW_HEIGHT: i32 = 750;
+const WINDOW_HEIGHT: i32 = 795;
 const MARGIN: i32 = 25;
 const FIELD_HEIGHT: i32 = 35;
 const BUTTON_HEIGHT: i32 = 40;
 const BUTTON_WIDTH: i32 = 120;
 const BROWSE_BTN_WIDTH: i32 = 60;
 const TAB_HEIGHT: i32 = 490;
+
+/// File-browser filter for the input file, with the relevant type shown FIRST
+/// (the default the dialog displays). `input_type`: 0 = VSF, 1 = Cartridge freeze.
+fn input_browse_filter(input_type: i32) -> &'static str {
+    if input_type == 1 {
+        "Cartridge Freezes\t*.prg\nVSF Snapshots\t*.vsf\nAll Files\t*"
+    } else {
+        "VSF Snapshots\t*.vsf\nCartridge Freezes\t*.prg\nAll Files\t*"
+    }
+}
+
+/// Suggested output path for a chosen input: same directory and file stem with
+/// a `_vs` suffix (so the source file is never proposed as the output) and the
+/// given extension. e.g. `game.vsf` + "prg" -> `game_vs.prg`.
+fn suggested_output_path(input: &Path, ext: &str) -> PathBuf {
+    let stem = input
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let file_name = format!("{}_vs.{}", stem, ext);
+    match input.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join(file_name),
+        _ => PathBuf::from(file_name),
+    }
+}
+
+/// Map the two input-type GUI choices to an [`InputMode`].
+/// `input_type`: 0 = VSF snapshot, 1 = Cartridge freeze.
+/// `freezer`: 0 = Auto-detect, 1 = self-restoring (AR/SS5/FM/Expert), 2 = ISEPIC, 3 = FC3.
+fn read_input_mode(input_type: i32, freezer: i32) -> InputMode {
+    if input_type == 0 {
+        InputMode::Vsf
+    } else {
+        InputMode::Freeze(match freezer {
+            1 => FreezeMethod::SelfRestoring,
+            2 => FreezeMethod::Isepic,
+            3 => FreezeMethod::Fc3,
+            _ => FreezeMethod::Auto,
+        })
+    }
+}
 
 fn main() {
     let app = app::App::default().with_scheme(app::Scheme::Oxy);
@@ -85,7 +127,7 @@ fn main() {
     let mut prg_input_label = Frame::default()
         .with_pos(MARGIN, prg_y)
         .with_size(WINDOW_WIDTH - 2 * MARGIN, 25)
-        .with_label("Select VICE snapshot image:");
+        .with_label("Select input file (VSF snapshot or cartridge freeze):");
     prg_input_label.set_label_size(13);
     prg_input_label.set_align(enums::Align::Left | enums::Align::Inside);
 
@@ -133,7 +175,7 @@ fn main() {
     let mut crt_input_label = Frame::default()
         .with_pos(MARGIN, crt_y)
         .with_size(WINDOW_WIDTH - 2 * MARGIN, 25)
-        .with_label("Select VICE snapshot image:");
+        .with_label("Select input file (VSF snapshot or cartridge freeze):");
     crt_input_label.set_label_size(13);
     crt_input_label.set_align(enums::Align::Left | enums::Align::Inside);
 
@@ -260,6 +302,38 @@ fn main() {
 
     y_pos += TAB_HEIGHT + 10;
 
+    // ==================== Input file type (shared by PRG and CRT) ====================
+    let mut input_type_label = Frame::default()
+        .with_pos(MARGIN, y_pos)
+        .with_size(105, 25)
+        .with_label("Input file type:");
+    input_type_label.set_label_size(13);
+    input_type_label.set_align(enums::Align::Left | enums::Align::Inside);
+
+    let mut input_type_choice = menu::Choice::default()
+        .with_pos(MARGIN + 110, y_pos)
+        .with_size(160, 25);
+    input_type_choice.add_choice("VSF snapshot|Cartridge freeze");
+    input_type_choice.set_value(0); // Default: VSF snapshot
+
+    let mut freezer_label = Frame::default()
+        .with_pos(MARGIN + 285, y_pos)
+        .with_size(95, 25)
+        .with_label("Force freezer:");
+    freezer_label.set_label_size(13);
+    freezer_label.set_align(enums::Align::Left | enums::Align::Inside);
+
+    let mut freezer_choice = menu::Choice::default()
+        .with_pos(MARGIN + 380, y_pos)
+        .with_size(WINDOW_WIDTH - (MARGIN + 380) - MARGIN, 25);
+    // NB: FLTK treats '/' as a submenu separator, so avoid it here (a "/"-label
+    // would render as a nested submenu). Commas keep this one flat menu item.
+    freezer_choice.add_choice("Auto-detect|Self-restoring (AR, SS5, FM, Expert)|ISEPIC|Final Cartridge III");
+    freezer_choice.set_value(0); // Default: Auto-detect
+    freezer_choice.deactivate(); // Enabled only for "Cartridge freeze"
+
+    y_pos += 45;
+
     // Shared option (all output formats): zero RAM regions still holding the
     // C64 power-on pattern so they become usable free blocks. Highly
     // experimental and off by default; confirmed via a dialog when enabled.
@@ -335,6 +409,8 @@ fn main() {
     let clear_poweron_check_rc = Rc::new(RefCell::new(clear_poweron_check.clone()));
     let status_buffer_rc = Rc::new(RefCell::new(status_buffer));
     let tabs_rc = Rc::new(RefCell::new(tabs.clone()));
+    let input_type_choice_rc = Rc::new(RefCell::new(input_type_choice.clone()));
+    let freezer_choice_rc = Rc::new(RefCell::new(freezer_choice.clone()));
 
     // Confirm before enabling the experimental power-on RAM clearing pass;
     // decline leaves it unchecked.
@@ -361,6 +437,19 @@ fn main() {
     // Extra RAM blocks for allocation failures (shared between PRG and CRT)
     // Each block is (address, count) - cleared on snapshot change or tab switch
     let extra_ram_blocks_rc: Rc<RefCell<Vec<(u16, u16)>>> = Rc::new(RefCell::new(Vec::new()));
+
+    // Input-type callback: the "Force freezer" override is only meaningful when
+    // converting a cartridge freeze, so enable it only for that choice.
+    {
+        let freezer = freezer_choice_rc.clone();
+        input_type_choice.clone().set_callback(move |c| {
+            if c.value() == 1 {
+                freezer.borrow_mut().activate();
+            } else {
+                freezer.borrow_mut().deactivate();
+            }
+        });
+    }
 
     // CRT cartridge type callback
     //
@@ -469,11 +558,12 @@ fn main() {
         let input_field = prg_input_field_rc.clone();
         let output_field = prg_output_field_rc.clone();
         let extra_blocks = extra_ram_blocks_rc.clone();
+        let itc = input_type_choice_rc.clone();
 
         prg_input_btn.set_callback(move |_| {
             let mut chooser = NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
-            chooser.set_title("Select VICE Snapshot Image");
-            chooser.set_filter("VSF Files\t*.vsf\nAll Files\t*");
+            chooser.set_title("Select input file");
+            chooser.set_filter(input_browse_filter(itc.borrow().value()));
 
             let current = input_field.borrow().value();
             if !current.is_empty() {
@@ -492,8 +582,9 @@ fn main() {
                 // Clear extra RAM blocks when snapshot changes
                 extra_blocks.borrow_mut().clear();
 
-                // Default output = same name as input but with .prg extension
-                let suggested_output = filename.with_extension("prg");
+                // Default output = input stem + "_vs" + .prg, so the source is
+                // never overwritten by the suggested filename.
+                let suggested_output = suggested_output_path(&filename, "prg");
                 output_field.borrow_mut().set_value(&suggested_output.to_string_lossy());
             }
         });
@@ -516,7 +607,7 @@ fn main() {
                 if let Some(parent) = input.parent() {
                     let _ = chooser.set_directory(&parent.to_path_buf());
                 }
-                let preset = input.with_extension("prg");
+                let preset = suggested_output_path(input, "prg");
                 if let Some(name) = preset.file_name() {
                     chooser.set_preset_file(&name.to_string_lossy());
                 }
@@ -536,11 +627,12 @@ fn main() {
         let input_field = crt_input_field_rc.clone();
         let output_field = crt_output_field_rc.clone();
         let extra_blocks = extra_ram_blocks_rc.clone();
+        let itc = input_type_choice_rc.clone();
 
         crt_input_btn.set_callback(move |_| {
             let mut chooser = NativeFileChooser::new(dialog::NativeFileChooserType::BrowseFile);
-            chooser.set_title("Select VICE Snapshot Image");
-            chooser.set_filter("VSF Files\t*.vsf\nAll Files\t*");
+            chooser.set_title("Select input file");
+            chooser.set_filter(input_browse_filter(itc.borrow().value()));
 
             let current = input_field.borrow().value();
             if !current.is_empty() {
@@ -559,8 +651,9 @@ fn main() {
                 // Clear extra RAM blocks when snapshot changes
                 extra_blocks.borrow_mut().clear();
 
-                // Default output = same name as input but with .crt extension
-                let suggested_output = filename.with_extension("crt");
+                // Default output = input stem + "_vs" + .crt, so the source is
+                // never overwritten by the suggested filename.
+                let suggested_output = suggested_output_path(&filename, "crt");
                 output_field.borrow_mut().set_value(&suggested_output.to_string_lossy());
             }
         });
@@ -583,7 +676,7 @@ fn main() {
                 if let Some(parent) = input.parent() {
                     let _ = chooser.set_directory(&parent.to_path_buf());
                 }
-                let preset = input.with_extension("crt");
+                let preset = suggested_output_path(input, "crt");
                 if let Some(name) = preset.file_name() {
                     chooser.set_preset_file(&name.to_string_lossy());
                 }
@@ -635,11 +728,16 @@ fn main() {
         let status_buffer = status_buffer_rc.clone();
         let tabs = tabs_rc.clone();
         let extra_blocks = extra_ram_blocks_rc.clone();
+        let input_type = input_type_choice_rc.clone();
+        let freezer = freezer_choice_rc.clone();
 
         convert_btn.set_callback(move |btn| {
             let tabs_val = tabs.borrow();
             let active_tab = tabs_val.value().map(|w| w.label()).unwrap_or_default();
             let is_crt = active_tab.contains("CRT");
+
+            // How to interpret the input file (VSF vs cartridge freeze + forced method).
+            let input_mode = read_input_mode(input_type.borrow().value(), freezer.borrow().value());
 
             status_buffer.borrow_mut().set_text("");
 
@@ -669,6 +767,14 @@ fn main() {
                 if !Path::new(&input_path).exists() {
                     let msg = format!("Error: Input file not found:\n{}", input_path);
                     status_buffer.borrow_mut().set_text(&msg);
+                    return;
+                }
+
+                // Never overwrite the source: refuse when output == input.
+                if paths_refer_to_same_file(&input_path, &output_path) {
+                    status_buffer.borrow_mut().set_text(
+                        "Error: The output file is the same as the input file.\n\nChoose a different output filename so the source is not overwritten.",
+                    );
                     return;
                 }
 
@@ -724,6 +830,7 @@ fn main() {
                     app::awake();
 
                     let result = CrtConfig::auto().map_err(|e| e.to_string()).and_then(|mut config| {
+                        config.base_config.input_mode = input_mode;
                         config.base_config.clear_poweron_ram = clear_poweron_ram;
                         if !cart_name.is_empty() {
                             config.cartridge_name = Some(cart_name.clone());
@@ -842,6 +949,14 @@ fn main() {
                     return;
                 }
 
+                // Never overwrite the source: refuse when output == input.
+                if paths_refer_to_same_file(&input_path, &output_path) {
+                    status_buffer.borrow_mut().set_text(
+                        "Error: The output file is the same as the input file.\n\nChoose a different output filename so the source is not overwritten.",
+                    );
+                    return;
+                }
+
                 if Path::new(&output_path).exists() {
                     let choice = dialog::choice2_default(
                         &format!("The output file already exists:\n\n{}\n\nDo you want to overwrite it?", output_path),
@@ -884,6 +999,7 @@ fn main() {
 
                     let result = match config_result {
                         Ok(mut config) => {
+                            config.input_mode = input_mode;
                             config.clear_poweron_ram = clear_poweron_ram;
                             let work_path = config.work_path.clone();
 

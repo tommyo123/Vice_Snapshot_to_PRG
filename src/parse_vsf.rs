@@ -142,6 +142,19 @@ impl ParseVSF {
         })
     }
 
+    /// Construct a parser shell for a snapshot obtained from a non-VSF source
+    /// (e.g. an Action Replay freeze decoded by [`crate::parse_ar`]). The raw
+    /// buffer is left empty; only `extract_ram`/`compress_lzsa` (which use the
+    /// file path for naming and the config for the work dir) are valid here —
+    /// `parse_import` must not be called on such an instance.
+    pub fn for_external_snapshot(file_path: &str, config: &Config) -> Self {
+        Self {
+            raw: Vec::new(),
+            file_path: file_path.to_string(),
+            config: config.clone(),
+        }
+    }
+
     pub fn parse_import(&self) -> Result<C64Snapshot, String> {
         self.parse_import_with(&ParserConfig::default_vice_like())
     }

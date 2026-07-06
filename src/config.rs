@@ -10,9 +10,43 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const VERSION: &str = "2.2";
 
+/// How the input file should be interpreted by the converters.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InputMode {
+    /// Detect a freezer signature; fall back to a VICE VSF snapshot.
+    /// This is the default and preserves the original auto-detect behaviour (CLI).
+    Auto,
+    /// Force VICE VSF snapshot parsing (do not treat the file as a freeze).
+    Vsf,
+    /// Convert a cartridge freeze, optionally forcing the freezer family.
+    Freeze(FreezeMethod),
+}
+
+/// Which freezer family to use when converting a cartridge freeze.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FreezeMethod {
+    /// Auto-detect which freezer produced the file.
+    Auto,
+    /// Self-restoring replay engine: Action Replay MK3-V8.4 + clones,
+    /// Super Snapshot 5, Freeze Machine, Expert Cartridge.
+    SelfRestoring,
+    /// ISEPIC 2-file freeze (feed the `-name` data file).
+    Isepic,
+    /// Final Cartridge III 2-file freeze (feed the `fc` stub; `-fc` is auto-found).
+    Fc3,
+}
+
+impl Default for InputMode {
+    fn default() -> Self {
+        InputMode::Auto
+    }
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub work_path: PathBuf,
+    /// How to interpret the input file (VSF vs cartridge freeze).
+    pub input_mode: InputMode,
     /// Zero RAM regions still holding the C64 power-on pattern before the
     /// free-block scan (see `FindRam::clear_poweron_pattern`). Highly
     /// experimental; default off.
@@ -23,8 +57,15 @@ impl Config {
     pub fn new(work_path: impl AsRef<Path>) -> Self {
         Self {
             work_path: work_path.as_ref().to_path_buf(),
+            input_mode: InputMode::Auto,
             clear_poweron_ram: false,
         }
+    }
+
+    /// Set how the input file is interpreted (builder style).
+    pub fn with_input_mode(mut self, mode: InputMode) -> Self {
+        self.input_mode = mode;
+        self
     }
 
     /// Enable/disable the power-on RAM pattern clearing pass.

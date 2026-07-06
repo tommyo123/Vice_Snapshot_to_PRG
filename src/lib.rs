@@ -11,8 +11,10 @@ pub mod config;
 pub mod convert_snapshot;
 pub mod find_ram;
 pub mod make_prg_asm;
+pub mod parse_ar;
 pub mod parse_vsf;
 pub mod patch_mem;
+pub mod util;
 
 // CRT/EasyFlash modules
 pub mod convert_snapshot_crt;
