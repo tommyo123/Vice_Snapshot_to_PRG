@@ -361,9 +361,8 @@ fn strip_prg_extension(filename: &str) -> String {
 /// Convert ASCII character to PETSCII uppercase
 fn ascii_to_petscii(ascii: u8) -> u8 {
     match ascii {
-        // ASCII lowercase a-z (0x61-0x7A) → PETSCII uppercase A-Z (0x41-0x5A)
+        // ASCII lowercase a-z (0x61-0x7A) -> PETSCII uppercase A-Z (0x41-0x5A)
         0x61..=0x7A => ascii - 0x20,
-        // Everything else stays the same
         _ => ascii,
     }
 }

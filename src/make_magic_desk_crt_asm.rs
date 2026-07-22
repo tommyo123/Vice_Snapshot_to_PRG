@@ -11,6 +11,9 @@ use std::fs;
 use crate::asm_wrapper::assemble_to_bytes;
 use crate::config::Config;
 
+/// Where the loader parks the restore code in RAM.
+const RESTORE_CODE_START: u16 = 0x0340;
+
 /// Magic Desk CRT restore code generator
 /// Generates restore code that starts at $0340 (called from boot trampoline @ $0100)
 /// Uses $DE00 for bank selection (bits 0-5) and disable (bit 7)
@@ -89,12 +92,19 @@ impl MakeMagicDeskCRTAsm {
     /// Generate Magic Desk restore code binary (to be placed at $0340 in RAM)
     pub fn generate_restore_code_binary(&self) -> Result<Vec<u8>, String> {
         let main_asm = self.generate_main_code_asm6502();
-        assemble_to_bytes(&main_asm)
+        let code = assemble_to_bytes(&main_asm)?;
+        crate::pack_format::check_io_scratch_fits(
+            self.config.pack_format,
+            0x10000 - (self.relocated_size + self.ram_lzsa_size),
+            RESTORE_CODE_START,
+            code.len(),
+        )?;
+        Ok(code)
     }
 
     /// Generate data copying code
     /// Copies relocated decompressor + RAM.lzsa from ROML banks to end of RAM
-    /// Key difference from EasyFlash: uses MAGIC_DESK_BANK ($DE00) only, no $DE02
+    /// Uses MAGIC_DESK_BANK ($DE00) only, not $DE02
     fn generate_data_copy_code(&self, ram_end_data_start: usize, end_data_size: usize) -> String {
         let roml_bank_start = 0x8000usize;
         let roml_bank_size = 8192usize;
@@ -122,9 +132,8 @@ impl MakeMagicDeskCRTAsm {
 
         format!(
             r#"    ; =============================================================================
-    ; DIRECT copy from ROML to final position (NO temp buffer)
-    ; Use $01=$33 throughout - ROML visible for reads, RAM for writes!
-    ; Reads from ROML cartridge, writes go to RAM underneath
+    ; Copy from ROML straight to the final position, no temp buffer
+    ; $01=$33 throughout: ROML is visible for reads, writes go to RAM underneath
     ; =============================================================================
 
     ; Enable I/O to access Magic Desk register
@@ -136,7 +145,7 @@ impl MakeMagicDeskCRTAsm {
     STA $F7
     STA MAGIC_DESK_BANK
 
-    ; Switch to $01=$33 (ROML visible for reading, RAM for writing!)
+    ; Switch to $01=$33 (ROML visible for reading, RAM for writing)
     LDA #$33
     STA $01
 
@@ -210,7 +219,7 @@ dec_lo:
 
 copy_done:
 
-    ; CRITICAL: Disable Magic Desk cartridge before decompression!
+    ; Disable the Magic Desk cartridge before decompression
     ; Must enable I/O first to access $DE00
     LDA #$37
     STA $01
@@ -219,17 +228,17 @@ copy_done:
     LDA #$80
     STA MAGIC_DESK_BANK
 
-    ; CRITICAL: Clear ALL pending interrupts after cartridge disable
+    ; Clear all pending interrupts after the cartridge is disabled
     LDA $DC0D     ; Read CIA1 ICR (clears pending IRQ)
-    LDA $DD0D     ; Read CIA2 ICR (clears pending NMI from FLAG pin!)
+    LDA $DD0D     ; Read CIA2 ICR (clears a pending NMI from the FLAG pin)
     LDA #$FF
     STA $D019     ; Clear VIC interrupt flags
 
-    ; Now set memory mode for decompression: ALL RAM, no I/O (like PRG does)
+    ; Set memory mode for decompression: all RAM, no I/O
     LDA #$34
     STA $01
 
-    ; End data copy complete - Magic Desk is now completely OFF
+    ; End data copy complete; the Magic Desk cartridge is disabled
 "#,
             source_bank,
             source_hi,
@@ -257,6 +266,19 @@ copy_done:
         let zp_data = self.format_bytes(&self.zp_lzsa);
         let f8_ff_bytes = self.format_bytes(&self.f8_ff_data);
 
+        // The restore code runs at $0340 and grows upwards, so the I/O scratch cannot live at
+        // $0200 as it does in the PRG loader. It goes directly below the payload at the top of
+        // RAM instead; `check_io_scratch_fits` verifies it clears the restore code.
+        let io_scratch = crate::pack_format::io_scratch_page_below(end_data_start);
+
+        // Format-specific decruncher pieces; LZSA1 falls back to the inline decoder.
+        let format = self.config.pack_format;
+        let entry = crate::pack_format::entry_label(format);
+        let zp_equates = crate::pack_format::seed_equates(format)
+            .unwrap_or_else(|| crate::decoders_lzsa1_magicdesk::LZSA1_ZP_EQUATES.to_string());
+        let main_decoder = crate::pack_format::main_body(format)
+            .unwrap_or_else(|| crate::decoders_lzsa1_magicdesk::LZSA1_MAIN_DECODER.to_string());
+
         format!(
             r#"; C64 Magic Desk CRT Snapshot Restore Code
 ; Entry point: $0340 (called from boot trampoline @ $0100)
@@ -271,14 +293,8 @@ RAM_DATA_SIZE = {}
 END_DATA_START = ${:04X}
 RAM_LZSA_START = ${:04X}
 
-; LZSA1 zero page variables
-LZSA_SRC_LO = $FC
-LZSA_SRC_HI = $FD
-LZSA_DST_LO = $FE
-LZSA_DST_HI = $FF
-LZSA_CMDBUF = $F9
-LZSA_WINPTR = $FA
-LZSA_OFFSET = $FA
+; Decompressor zero page variables
+%%ZP_EQUATES%%
 
 start:
     SEI
@@ -286,7 +302,6 @@ start:
 
 {}
 
-    ; Set $01 to same value PRG uses
     LDA #$35
     STA $01
 
@@ -305,29 +320,13 @@ start:
     LDA #$FF
     STA $D019
 
-    ; TEMPORARY stack @ $03FF (page 3) - NOT the final snapshot SP!
+    ; Temporary stack at $03FF (page 3); the snapshot SP is restored later
     LDX #$FF
     TXS
 
-    LDA #<color_data
-    STA LZSA_SRC_LO
-    LDA #>color_data
-    STA LZSA_SRC_HI
-    LDA #$00
-    STA LZSA_DST_LO
-    LDA #$D8
-    STA LZSA_DST_HI
-    JSR decompress_lzsa1
+%%DECODE_COLOR%%
 
-    LDA #<vic_data
-    STA LZSA_SRC_LO
-    LDA #>vic_data
-    STA LZSA_SRC_HI
-    LDA #$00
-    STA LZSA_DST_LO
-    LDA #$D0
-    STA LZSA_DST_HI
-    JSR decompress_lzsa1
+%%DECODE_VIC%%
 
     ; Setup VIC raster position early
     LDA $D011
@@ -341,18 +340,10 @@ start:
     LDA #$FF
     STA $D019
 
-    LDA #<sid_data
-    STA LZSA_SRC_LO
-    LDA #>sid_data
-    STA LZSA_SRC_HI
-    LDA #$00
-    STA LZSA_DST_LO
-    LDA #$D4
-    STA LZSA_DST_HI
-    JSR decompress_lzsa1
+%%DECODE_SID%%
 
 ; =============================================================================
-; CIA1 Complete Setup
+; CIA1 setup
 ; =============================================================================
     LDA #$7F
     STA $DC0D
@@ -407,7 +398,7 @@ start:
     LDA cia1_data+8
     STA $DC08
 
-    ; SDR and control registers (WITHOUT start bit - safe!)
+    ; SDR and control registers, without the start bit
     LDA cia1_data+12
     STA $DC0C
     LDA cia1_data+14
@@ -418,7 +409,7 @@ start:
     STA $DC0F
 
 ; =============================================================================
-; CIA2 Complete Setup
+; CIA2 setup
 ; =============================================================================
     LDA #$7F
     STA $DD0D
@@ -490,10 +481,10 @@ start:
     STA LZSA_DST_LO
     LDA #$00
     STA LZSA_DST_HI
-    JSR decompress_lzsa1
+    JSR %%ENTRY%%
 
     ; =============================================================================
-    ; Clear $F8-$FB (critical! Like PRG does)
+    ; Clear the decompressor zero page scratch $F8-$FB
     ; =============================================================================
     LDA #$00
     STA $F8
@@ -503,10 +494,10 @@ start:
 
     ; =============================================================================
     ; Copy relocated decompressor from end of memory to $0100
-    ; Then decompress RAM (exactly like PRG does)
+    ; Then decompress RAM
     ; =============================================================================
 
-    ; CRITICAL: Switch to all-RAM mode BEFORE copying relocated decompressor!
+    ; Switch to all-RAM mode before copying the relocated decompressor
     ; If END_DATA_START falls in $D000-$DFFF, reading with I/O visible ($01=$35)
     ; would return I/O register values instead of RAM data, corrupting the decompressor.
     LDA #$34
@@ -530,13 +521,12 @@ CPLP:
     LDA #>RAM_LZSA_START
     STA LZSA_SRC_HI
 
-    ; Start decompression at $0200 - skip $0100-$01FF where decompressor lives!
+    ; Start decompression at $0200; $0100-$01FF holds the decompressor
     LDA #$00
     STA LZSA_DST_LO
     LDA #$02
     STA LZSA_DST_HI
 
-    ; Jump to relocated decompressor @ $0100
     JMP $0100
 
 ; =============================================================================
@@ -558,163 +548,8 @@ f8_ff_data:
 {}
 
 ; =============================================================================
-; LZSA1 Decompressor
-; =============================================================================
-decompress_lzsa1:
-    LDY #0
-    LDX #0
-
-cp_length:
-    LDA (LZSA_SRC_LO),Y
-    INC LZSA_SRC_LO
-    BNE cp_skip0
-    INC LZSA_SRC_HI
-
-cp_skip0:
-    STA LZSA_CMDBUF
-    AND #$70
-    LSR
-    BEQ lz_offset
-    LSR
-    LSR
-    LSR
-    CMP #$07
-    BCC cp_got_len
-    JSR get_length
-    STX cp_npages+1
-
-cp_got_len:
-    TAX
-
-cp_byte:
-    LDA (LZSA_SRC_LO),Y
-    STA (LZSA_DST_LO),Y
-    INC LZSA_SRC_LO
-    BNE cp_skip1
-    INC LZSA_SRC_HI
-cp_skip1:
-    INC LZSA_DST_LO
-    BNE cp_skip2
-    INC LZSA_DST_HI
-cp_skip2:
-    DEX
-    BNE cp_byte
-cp_npages:
-    LDA #0
-    BEQ lz_offset
-    DEC cp_npages+1
-    BCC cp_byte
-
-lz_offset:
-    LDA (LZSA_SRC_LO),Y
-    INC LZSA_SRC_LO
-    BNE offset_lo
-    INC LZSA_SRC_HI
-
-offset_lo:
-    STA LZSA_OFFSET+0
-
-    LDA #$FF
-    BIT LZSA_CMDBUF
-    BPL offset_hi
-
-    LDA (LZSA_SRC_LO),Y
-    INC LZSA_SRC_LO
-    BNE offset_hi
-    INC LZSA_SRC_HI
-
-offset_hi:
-    STA LZSA_OFFSET+1
-
-lz_length:
-    LDA LZSA_CMDBUF
-    AND #$0F
-    ADC #$03
-    CMP #$12
-    BCC got_lz_len
-    JSR get_length
-
-got_lz_len:
-    INX
-    EOR #$FF
-    TAY
-    EOR #$FF
-
-get_lz_dst:
-    ADC LZSA_DST_LO
-    STA LZSA_DST_LO
-    INY
-    BCS get_lz_win
-    BEQ get_lz_win
-    DEC LZSA_DST_HI
-
-get_lz_win:
-    CLC
-    ADC LZSA_OFFSET+0
-    STA LZSA_WINPTR+0
-    LDA LZSA_DST_HI
-    ADC LZSA_OFFSET+1
-    STA LZSA_WINPTR+1
-
-lz_byte:
-    LDA (LZSA_WINPTR),Y
-    STA (LZSA_DST_LO),Y
-    INY
-    BNE lz_byte
-    INC LZSA_DST_HI
-    DEX
-    BNE lz_more
-    JMP cp_length
-
-lz_more:
-    INC LZSA_WINPTR+1
-    LDY #$00
-    BEQ lz_byte
-
-get_length:
-    CLC
-    ADC (LZSA_SRC_LO),Y
-    INC LZSA_SRC_LO
-    BNE skip_inc
-    INC LZSA_SRC_HI
-
-skip_inc:
-    BCC got_length
-    CLC
-    TAX
-
-extra_byte:
-    JSR get_byte
-    PHA
-    TXA
-    BEQ extra_word
-
-check_length:
-    PLA
-    BNE got_length
-    DEX
-got_length:
-    RTS
-
-extra_word:
-    JSR get_byte
-    TAX
-    BNE check_length
-
-finished:
-    PLA
-    PLA
-    PLA
-    RTS
-
-get_byte:
-    LDA (LZSA_SRC_LO),Y
-    INC LZSA_SRC_LO
-    BNE got_byte
-    INC LZSA_SRC_HI
-got_byte:
-    RTS
-"#,
+; Decompressor
+%%MAIN_DECODER%%"#,
             self.relocated_size,
             ram_data_size,
             end_data_start,
@@ -728,10 +563,21 @@ got_byte:
             zp_data,
             f8_ff_bytes
         )
+        .replace("%%DECODE_COLOR%%", &crate::pack_format::io_decode_block(format, "color_data", 0xD8, 1024, "color", io_scratch))
+        .replace("%%DECODE_VIC%%", &crate::pack_format::io_decode_block(format, "vic_data", 0xD0, 47, "vic", io_scratch))
+        .replace("%%DECODE_SID%%", &crate::pack_format::io_decode_block(format, "sid_data", 0xD4, 25, "sid", io_scratch))
+        .replace("%%ZP_EQUATES%%", &zp_equates)
+        .replace("%%ENTRY%%", entry)
+        .replace("%%MAIN_DECODER%%", &main_decoder)
     }
 
     /// Generate relocated decompressor binary (to be placed at end of memory, then copied to $0100)
     pub fn generate_relocated_decompressor(&self) -> Result<Vec<u8>, String> {
+        // Non-LZSA1 formats supply their own $0100 body; LZSA1 uses the decoder below.
+        if let Some(body) = crate::pack_format::relocated_body(self.config.pack_format, self.block9_addr) {
+            return assemble_to_bytes(&format!("*=$0100\n{}", body));
+        }
+
         let asm_source = format!(
             r#"*=$0100
 
@@ -886,7 +732,7 @@ extra_word:
     BNE check_length
 
 finished:
-    ; Decompression complete - set pure RAM mode for block 9 stack write
+    ; Decompression complete; set pure RAM mode for the block 9 stack write
     LDA #$30
     STA $01
     JMP ${:04X}

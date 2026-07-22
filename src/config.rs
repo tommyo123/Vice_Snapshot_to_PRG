@@ -5,16 +5,17 @@
 // Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
 
+use crate::progress::Progress;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const VERSION: &str = "2.2";
+pub const VERSION: &str = "2.3";
 
 /// How the input file should be interpreted by the converters.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum InputMode {
     /// Detect a freezer signature; fall back to a VICE VSF snapshot.
-    /// This is the default and preserves the original auto-detect behaviour (CLI).
+    /// This is the default.
     Auto,
     /// Force VICE VSF snapshot parsing (do not treat the file as a freeze).
     Vsf,
@@ -42,15 +43,143 @@ impl Default for InputMode {
     }
 }
 
+/// Compression format for the restored snapshot blocks. Each maps to a lzan encoder and an
+/// embedded 6502 decruncher. LZSA1 is the default.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PackFormat {
+    Lzsa1,
+    Lzsa2,
+    Zx0,
+    Zx02,
+    LzanMin,
+    Bolt,
+    Bb2,
+}
+
+impl Default for PackFormat {
+    fn default() -> Self {
+        PackFormat::Lzsa1
+    }
+}
+
+impl PackFormat {
+    /// CLI identifier.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PackFormat::Lzsa1 => "lzsa1",
+            PackFormat::Lzsa2 => "lzsa2",
+            PackFormat::Zx0 => "zx0",
+            PackFormat::Zx02 => "zx02",
+            PackFormat::LzanMin => "lzan-min",
+            PackFormat::Bolt => "bolt",
+            PackFormat::Bb2 => "bb2",
+        }
+    }
+
+    /// Human-readable label for the GUI selector.
+    pub fn label(self) -> &'static str {
+        match self {
+            PackFormat::Lzsa1 => "LZSA1 (default)",
+            PackFormat::Lzsa2 => "LZSA2 (very slow compression)",
+            PackFormat::Zx0 => "ZX0 (very slow compression)",
+            PackFormat::Zx02 => "ZX02 (very slow compression)",
+            PackFormat::LzanMin => "LZAN-min (very slow compression)",
+            PackFormat::Bolt => "BoltLZ (fastest decompression)",
+            PackFormat::Bb2 => "ByteBoozer2",
+        }
+    }
+
+    /// Parse a CLI identifier (accepts a few aliases).
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s.to_ascii_lowercase().as_str() {
+            "lzsa1" | "lzsa" => PackFormat::Lzsa1,
+            "lzsa2" => PackFormat::Lzsa2,
+            "zx0" => PackFormat::Zx0,
+            "zx02" => PackFormat::Zx02,
+            "lzan-min" | "lzanmin" | "lzan" => PackFormat::LzanMin,
+            "bolt" | "boltlz" => PackFormat::Bolt,
+            "bb2" | "byteboozer2" => PackFormat::Bb2,
+            _ => return None,
+        })
+    }
+
+    /// All formats, in selector order (LZSA1 first).
+    pub fn all() -> [PackFormat; 7] {
+        [
+            PackFormat::Lzsa1,
+            PackFormat::Lzsa2,
+            PackFormat::Zx0,
+            PackFormat::Zx02,
+            PackFormat::LzanMin,
+            PackFormat::Bolt,
+            PackFormat::Bb2,
+        ]
+    }
+}
+
+/// Removes a conversion's temporary work directory when it goes out of scope, so the intermediate
+/// files are gone whether the conversion succeeded, failed, was cancelled or panicked.
+pub struct WorkDirGuard(PathBuf);
+
+impl WorkDirGuard {
+    pub fn new(work_path: impl Into<PathBuf>) -> Self {
+        Self(work_path.into())
+    }
+
+    /// The directory this guard will remove.
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for WorkDirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Common tail for a conversion, run after its [`WorkDirGuard`] has removed the work directory.
+///
+/// A cancelled run deletes the output file it had begun writing. The converters refuse to
+/// overwrite an existing output, and the caller removes any file the user agreed to replace, so
+/// the file at that path came from this run and is truncated.
+///
+/// A successful run whose work directory is still on disk is reported as an error.
+pub fn finish_conversion(
+    outcome: Result<u32, String>,
+    work_path: &Path,
+    output_path: &str,
+) -> Result<u32, String> {
+    if outcome
+        .as_ref()
+        .err()
+        .is_some_and(|e| crate::progress::is_cancelled_error(e))
+    {
+        let _ = std::fs::remove_file(output_path);
+    }
+    match outcome {
+        Ok(_) if work_path.exists() => Err(format!(
+            "Conversion succeeded, but the temporary directory could not be removed:\n{}",
+            work_path.display()
+        )),
+        other => other,
+    }
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub work_path: PathBuf,
     /// How to interpret the input file (VSF vs cartridge freeze).
     pub input_mode: InputMode,
-    /// Zero RAM regions still holding the C64 power-on pattern before the
+    /// Zero RAM regions holding the C64 power-on pattern before the
     /// free-block scan (see `FindRam::clear_poweron_pattern`). Highly
     /// experimental; default off.
     pub clear_poweron_ram: bool,
+    /// Compression format for the snapshot blocks. Default LZSA1.
+    pub pack_format: PackFormat,
+    /// Cancellation flag and current-step text, shared with whoever started the conversion.
+    /// Default is a handle that is never cancelled, so non-interactive callers ignore it.
+    pub progress: Progress,
 }
 
 impl Config {
@@ -59,7 +188,21 @@ impl Config {
             work_path: work_path.as_ref().to_path_buf(),
             input_mode: InputMode::Auto,
             clear_poweron_ram: false,
+            pack_format: PackFormat::default(),
+            progress: Progress::default(),
         }
+    }
+
+    /// Set the compression format (builder style).
+    pub fn with_pack_format(mut self, format: PackFormat) -> Self {
+        self.pack_format = format;
+        self
+    }
+
+    /// Share a progress/cancel handle with the caller (builder style).
+    pub fn with_progress(mut self, progress: Progress) -> Self {
+        self.progress = progress;
+        self
     }
 
     /// Set how the input file is interpreted (builder style).

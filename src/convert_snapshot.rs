@@ -54,6 +54,9 @@ impl ConvertSnapshot {
             return Err(format!("Output file already exists:\n{}\n\nPlease choose a different filename or delete the existing file first.", output_path));
         }
 
+        let progress = self.config.progress.clone();
+        progress.step("Reading snapshot...")?;
+
         // Accept either a VICE VSF snapshot or a self-restoring freezer image
         // (Action Replay etc.). Freeze files are decoded by replaying their own
         // restore stub; both paths yield a C64Snapshot for the rest of the pipeline.
@@ -100,6 +103,8 @@ impl ConvertSnapshot {
             0
         });
 
+        progress.step("Patching memory...")?;
+
         let mut ram_finder = FindRam::with_extra_blocks(&ram, &self.extra_ram_blocks);
         let patch_mem = PatchMem::new(&snap, &mut *ram, &mut ram_finder)
             .map_err(|e| format!("Memory patching failed: {}", e))?;
@@ -122,16 +127,23 @@ impl ConvertSnapshot {
                 .map_err(|e| format!("Failed to extract components: {}", e))?;
 
         // CIA files are not compressed (only 20 bytes each)
-        parser.compress_lzsa(&ram_path, &format!("{}.lzsa", ram_path))
+        progress.step("Compressing RAM...")?;
+        parser.compress_block(&ram_path, &format!("{}.lzsa", ram_path), true)
             .map_err(|e| format!("Failed to compress RAM: {}", e))?;
+        progress.step("Compressing color RAM...")?;
         parser.compress_lzsa(&color_path, &format!("{}.lzsa", color_path))
             .map_err(|e| format!("Failed to compress color RAM: {}", e))?;
+        progress.step("Compressing zero page...")?;
         parser.compress_lzsa(&zp_path, &format!("{}.lzsa", zp_path))
             .map_err(|e| format!("Failed to compress zero page: {}", e))?;
+        progress.step("Compressing VIC...")?;
         parser.compress_lzsa(&vic_path, &format!("{}.lzsa", vic_path))
             .map_err(|e| format!("Failed to compress VIC: {}", e))?;
+        progress.step("Compressing SID...")?;
         parser.compress_lzsa(&sid_path, &format!("{}.lzsa", sid_path))
             .map_err(|e| format!("Failed to compress SID: {}", e))?;
+
+        progress.step("Assembling PRG...")?;
 
         let prg_maker = MakePRGAsm::new(
             &format!("{}.lzsa", color_path),
@@ -148,6 +160,10 @@ impl ConvertSnapshot {
 
         prg_maker.generate_prg(output_path)
             .map_err(|e| format!("Failed to generate PRG: {}", e))?;
+
+        // Fail if the user cancelled while the output was being assembled. The caller
+        // removes the file that was just written.
+        progress.check()?;
 
         Ok(())
     }

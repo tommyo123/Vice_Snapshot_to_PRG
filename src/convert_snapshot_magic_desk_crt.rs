@@ -16,10 +16,9 @@
 //! - Banks 1-N ROML: Restore code + relocated decompressor + RAM.lzsa
 //! - Banks N+1..   : embedded PRG file data
 //!
-//! Magic Desk's $DE00 bit 7 toggles EXROM and is fully reversible, so (unlike the
-//! original assumption in earlier versions) the cartridge can be banked in and out
-//! at runtime. This makes a KERNAL LOAD hook possible, identical in behaviour to
-//! the EasyFlash format. The small trampoline lives in C64 RAM; the handler,
+//! Magic Desk's $DE00 bit 7 toggles EXROM and is reversible, so the cartridge can be
+//! banked in and out at runtime. That allows a KERNAL LOAD hook with the same
+//! behaviour as the EasyFlash format. The trampoline lives in C64 RAM; the handler,
 //! metadata and filenames live in the cartridge directory bank.
 //!
 // Copyright (c) 2025-2026 Tommy Olsen
@@ -83,6 +82,9 @@ impl ConvertSnapshotMagicDeskCRT {
 
         // Parse the input: either a VICE VSF snapshot or a self-restoring freezer
         // image (Action Replay etc.), decoded by replaying its own restore stub.
+        let progress = self.config.base_config.progress.clone();
+        progress.step("Reading snapshot...")?;
+
         let input_bytes = fs::read(input_path)
             .map_err(|e| format!("Failed to read input file: {}", e))?;
 
@@ -162,11 +164,11 @@ impl ConvertSnapshotMagicDeskCRT {
         // Initialize RAM finder AFTER trampoline is written.
         let mut ram_finder = FindRam::with_extra_blocks(&ram, &self.extra_ram_blocks);
 
-        // Patch memory with restoration code (using PatchMem)
+        // Patch memory with restoration code.
+        progress.step("Patching memory...")?;
         let patch_mem = PatchMem::new(&snap, &mut *ram, &mut ram_finder)
             .map_err(|e| format!("Memory patching failed: {}", e))?;
 
-        // Create patched snapshot
         let patched_snap = C64Snapshot {
             cpu: snap.cpu.clone(),
             mem: C64Mem {
@@ -185,21 +187,28 @@ impl ConvertSnapshotMagicDeskCRT {
             .extract_ram(&patched_snap)
             .map_err(|e| format!("Failed to extract components: {}", e))?;
 
+        progress.step("Compressing RAM...")?;
         parser
-            .compress_lzsa(&ram_path, &format!("{}.lzsa", ram_path))
+            .compress_block(&ram_path, &format!("{}.lzsa", ram_path), true)
             .map_err(|e| format!("Failed to compress RAM: {}", e))?;
+        progress.step("Compressing color RAM...")?;
         parser
             .compress_lzsa(&color_path, &format!("{}.lzsa", color_path))
             .map_err(|e| format!("Failed to compress color RAM: {}", e))?;
+        progress.step("Compressing zero page...")?;
         parser
             .compress_lzsa(&zp_path, &format!("{}.lzsa", zp_path))
             .map_err(|e| format!("Failed to compress zero page: {}", e))?;
+        progress.step("Compressing VIC...")?;
         parser
             .compress_lzsa(&vic_path, &format!("{}.lzsa", vic_path))
             .map_err(|e| format!("Failed to compress VIC: {}", e))?;
+        progress.step("Compressing SID...")?;
         parser
             .compress_lzsa(&sid_path, &format!("{}.lzsa", sid_path))
             .map_err(|e| format!("Failed to compress SID: {}", e))?;
+
+        progress.step("Assembling Magic Desk CRT...")?;
 
         // Read compressed RAM size
         let ram_lzsa = fs::read(format!("{}.lzsa", ram_path))
@@ -299,7 +308,6 @@ impl ConvertSnapshotMagicDeskCRT {
         payload.extend_from_slice(&final_relocated);
         payload.extend_from_slice(&ram_lzsa);
 
-        // Cartridge name
         let cartridge_name = self
             .config
             .cartridge_name
@@ -314,10 +322,16 @@ impl ConvertSnapshotMagicDeskCRT {
                 &payload,
                 &prg_files,
                 load_save_hook.as_mut().unwrap(),
-            )
+            )?;
         } else {
-            self.build_plain(output_path, cartridge_name, &boot_code_binary, &payload)
+            self.build_plain(output_path, cartridge_name, &boot_code_binary, &payload)?;
         }
+
+        // Fail if the user cancelled while the cartridge was being assembled. The caller
+        // removes the file that was just written.
+        progress.check()?;
+
+        Ok(())
     }
 
     /// Build a plain Magic Desk cartridge (no embedded files).

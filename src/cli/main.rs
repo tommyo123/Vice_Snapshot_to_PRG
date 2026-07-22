@@ -9,7 +9,7 @@ use std::env;
 use std::path::Path;
 use std::process;
 
-use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION, InputMode, FreezeMethod};
+use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION, InputMode, FreezeMethod, PackFormat};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
 use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
@@ -31,12 +31,12 @@ struct CliArgs {
     hook_addr: Option<u16>,
     input_mode: InputMode,
     clear_poweron_ram: bool,
+    pack_format: PackFormat,
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    // Check for help flag first
     if args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) {
         print_usage(&args[0]);
         process::exit(0);
@@ -145,8 +145,7 @@ fn main() {
     if let Some(ref dir) = cli_args.include_dir {
         println!("Include: {}", dir);
     }
-    // Print the hook address only when it is actually honored
-    // (a CRT format with an include dir).
+    // Print the hook address only when it is used (a CRT format with an include dir).
     if let Some(addr) = cli_args.hook_addr {
         if cli_args.format != OutputFormat::Prg && cli_args.include_dir.is_some() {
             println!("Hook:    ${:04X}", addr);
@@ -186,6 +185,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     let mut hook_addr: Option<u16> = None;
     let mut input_mode: Option<InputMode> = None;
     let mut clear_poweron_ram = false;
+    let mut pack_format = PackFormat::default();
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -270,6 +270,18 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
             "--clear-poweron-ram" => {
                 clear_poweron_ram = true;
             }
+            "--format" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("--format requires a value (lzsa1|lzsa2|zx0|zx02|lzan-min|bolt|bb2)".to_string());
+                }
+                pack_format = PackFormat::from_str(&args[i]).ok_or_else(|| {
+                    format!(
+                        "Unknown --format value '{}' (use lzsa1|lzsa2|zx0|zx02|lzan-min|bolt|bb2)",
+                        args[i]
+                    )
+                })?;
+            }
             _ if arg.starts_with('-') => {
                 return Err(format!("Unknown option: {}", arg));
             }
@@ -305,6 +317,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         hook_addr,
         input_mode: input_mode.unwrap_or(InputMode::Auto),
         clear_poweron_ram,
+        pack_format,
     })
 }
 
@@ -322,6 +335,7 @@ fn convert_prg(cli_args: &CliArgs) -> Result<(), String> {
         .map_err(|e| format!("Failed to initialize: {}", e))?
         .with_clear_poweron(cli_args.clear_poweron_ram);
     config.input_mode = cli_args.input_mode;
+    config.pack_format = cli_args.pack_format;
 
     let work_path = config.work_path.clone();
     let converter = ConvertSnapshot::new(config);
@@ -339,6 +353,7 @@ fn convert_crt(cli_args: &CliArgs) -> Result<(), String> {
         .map_err(|e| format!("Failed to initialize: {}", e))?;
     config.base_config.input_mode = cli_args.input_mode;
     config.base_config.clear_poweron_ram = cli_args.clear_poweron_ram;
+    config.base_config.pack_format = cli_args.pack_format;
 
     if let Some(ref name) = cli_args.cartridge_name {
         config = config.with_cartridge_name(name);
@@ -368,6 +383,7 @@ fn convert_magic_desk_crt(cli_args: &CliArgs) -> Result<(), String> {
         .map_err(|e| format!("Failed to initialize: {}", e))?;
     config.base_config.input_mode = cli_args.input_mode;
     config.base_config.clear_poweron_ram = cli_args.clear_poweron_ram;
+    config.base_config.pack_format = cli_args.pack_format;
 
     if let Some(ref name) = cli_args.cartridge_name {
         config = config.with_cartridge_name(name);
@@ -433,6 +449,15 @@ fn print_usage(program_name: &str) {
     println!("  --hook-addr <hex>    LOAD/SAVE hook address (EasyFlash or Magic Desk, overrides");
     println!("                       the automatic placement: $0100 when the snapshot's stack");
     println!("                       pointer allows it, otherwise $0334)");
+    println!("  --format <fmt>       Compression format for the snapshot blocks; fmt =");
+    println!("                       lzsa1|lzsa2|zx0|zx02|lzan-min|bolt|bb2 (default: lzsa1)");
+    println!("                         lzsa1    = default");
+    println!("                         lzsa2    = very slow compression");
+    println!("                         zx0      = very slow compression");
+    println!("                         zx02     = very slow compression");
+    println!("                         lzan-min = very slow compression");
+    println!("                         bolt     = fastest decompression");
+    println!("                         bb2      = ByteBoozer2");
     println!("  --vsf                Force VSF snapshot input (do not treat as a freeze)");
     println!("  --freezer <type>     Convert a cartridge freeze; type = auto|ar|isepic|fc3");
     println!("                         auto   = detect the freezer automatically");

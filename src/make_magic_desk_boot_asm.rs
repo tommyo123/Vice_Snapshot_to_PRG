@@ -15,7 +15,7 @@ pub struct MakeMagicDeskBootAsm {
     restore_code_size: usize,
     /// The ROM bank where the restore payload (restore code + decompressor +
     /// RAM.lzsa) begins. 0 for plain snapshots (payload follows the boot code in
-    /// bank 0). 1 when files are embedded — bank 0 is then reserved for the boot
+    /// bank 0). 1 when files are embedded; bank 0 is then reserved for the boot
     /// code plus the LOAD directory (handler/metadata/filenames).
     restore_start_bank: usize,
 }
@@ -165,7 +165,7 @@ TRAMPOLINE_SIZE = trampoline_end - trampoline_code
         };
 
         format!(
-            r#"    ; Trampoline @ $0100 (MINIMAL - copy restore code from ROML to $0340)
+            r#"    ; Trampoline @ $0100: copy restore code from ROML to $0340
 
 {}
 

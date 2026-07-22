@@ -1,15 +1,15 @@
 //! Action Replay (and compatible) freeze-file front-end.
 //!
-//! Instead of statically decoding each freezer's packed format, we **replay the
-//! freeze file's own 6510 restore stub** in a tiny sandbox CPU and read the
-//! resulting machine state. The restore stub banks ROM out and runs entirely in
-//! RAM + I/O, so no C64 ROM images are needed: we model 64K RAM, the $00/$01 CPU
-//! port banking, and capture every write to the VIC/SID/CIA/color I/O registers,
-//! then stop at the handoff `RTI` that returns to the frozen program. At that
-//! point the RAM array + captured I/O + the RTI frame == the full `C64Snapshot`.
+//! The freeze file's own 6510 restore stub is replayed in a sandbox CPU and the
+//! resulting machine state is read out. The restore stub banks ROM out and runs
+//! entirely in RAM + I/O, so no C64 ROM images are needed: the sandbox models 64K
+//! RAM and the $00/$01 CPU port banking, captures every write to the VIC, SID, CIA
+//! and color I/O registers, then stops at the handoff `RTI` that returns to the
+//! frozen program. At that point the RAM array, the captured I/O and the RTI frame
+//! make up the full `C64Snapshot`.
 //!
-//! This is freezer-agnostic: any freeze saved as a self-restoring autoboot PRG
-//! (Action Replay 4/5/6, and others built the same way) is handled by one engine.
+//! Any freeze saved as a self-restoring autoboot PRG (Action Replay 4/5/6, and
+//! others built the same way) goes through this same path.
 //!
 // Copyright (c) 2025-2026 Tommy Olsen
 // Licensed under the MIT License.
@@ -25,7 +25,7 @@ use crate::parse_vsf::{C64Snapshot, Cpu6510, C64Mem, VicII, Cia6526, Sid6581};
 /// Maximum instructions to emulate before giving up (restore stubs finish in <1M).
 const MAX_INSTRUCTIONS: u64 = 8_000_000;
 
-/// Heuristic: does this look like a self-restoring freezer snapshot we can replay?
+/// Heuristic: does this look like a replayable self-restoring freezer snapshot?
 ///
 /// The Action Replay family (MK3 through V8.4), its clones, and Freeze Machine
 /// v1/v2 save a freeze as a BASIC-autoboot PRG (`10 SYS<addr>`) whose restore
@@ -37,9 +37,8 @@ const MAX_INSTRUCTIONS: u64 = 8_000_000;
 /// LDA #$34 / STA $01   ; A9 34 85 01      (all-RAM banking for the depack)
 /// ```
 ///
-/// We detect that signature at the BASIC stub's SYS target. It is precise so it
-/// won't match ordinary PRGs, and it rejects formats we cannot replay without
-/// ROM images:
+/// The signature is checked at the BASIC stub's SYS target. Formats that need ROM
+/// images to replay are rejected:
 ///   - AR MK2 (its stub is a multi-file KERNAL disk loader: `JSR $0994 ...`),
 ///   - Freeze Frame / ISEPIC / Niki (not SYS-autoboot freeze PRGs).
 pub fn is_ar_freeze(bytes: &[u8]) -> bool {
@@ -114,7 +113,8 @@ pub fn snapshot_from_ar_bytes(data: &[u8]) -> Result<C64Snapshot, String> {
 
 /* ===================== format detection + dispatch ===================== */
 
-/// Which freezer produced a given file (those we can reconstruct a snapshot from).
+/// Which freezer produced a given file, limited to the formats this module can
+/// reconstruct a snapshot from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FreezerKind {
     /// Self-restoring autoboot PRG, replayed in the ROM-less sandbox.
@@ -130,7 +130,7 @@ pub enum FreezerKind {
 
 /// Expert Cartridge (Trilogic) freeze: a self-restoring autoboot PRG whose stub
 /// banks all RAM out via the CPU port ($00 + $01) rather than masking $DD0D.
-/// Fingerprinted by the embedded "TRILOGIC" string plus the SEI/STA $00/STA $01 entry.
+/// Detected by the SEI entry followed by STA $00 and STA $01 at the SYS target.
 pub fn is_expert_freeze(bytes: &[u8]) -> bool {
     if bytes.len() < 0x20 || bytes[0] != 0x01 || bytes[1] != 0x08 {
         return false;
@@ -150,7 +150,7 @@ pub fn is_expert_freeze(bytes: &[u8]) -> bool {
         && stub.windows(2).take(12).any(|w| w == [0x85, 0x01])
 }
 
-/// ISEPIC data file ("-name"): not a normal PRG — it begins with the restore stub
+/// ISEPIC data file ("-name"): not a normal PRG. It begins with the restore stub
 /// `LDX #$FF / TXS / LDY #$13 / LDA $0680,Y / STA $0119,Y / ...` that runs at $039C.
 pub fn is_isepic_freeze(bytes: &[u8]) -> bool {
     const SIG: [u8; 11] = [0xA2, 0xFF, 0x9A, 0xA0, 0x13, 0xB9, 0x80, 0x06, 0x99, 0x19, 0x01];
@@ -184,7 +184,7 @@ pub fn detect_freezer(bytes: &[u8]) -> Option<FreezerKind> {
 /// Reconstruct a `C64Snapshot` from any single-file freezer image (auto-detected).
 ///
 /// FC3 is a 2-file format whose bulk lives in a separate `-fc` companion, so it
-/// cannot be reconstructed from this single buffer — use
+/// cannot be reconstructed from this single buffer. Use
 /// [`snapshot_from_freeze_file`], which locates the companion on disk.
 pub fn snapshot_from_freeze_bytes(data: &[u8]) -> Result<C64Snapshot, String> {
     match detect_freezer(data) {
@@ -213,7 +213,7 @@ pub fn snapshot_from_freeze_file(path: &str) -> Result<C64Snapshot, String> {
 }
 
 /// Reconstruct a `C64Snapshot` forcing a specific freezer family (no detection).
-/// Used by the explicit "Cartridge freeze → force method" path. Fails clearly if
+/// Used by the explicit "Cartridge freeze -> force method" path. Fails clearly if
 /// the file isn't actually that format (the forced replay won't reach a handoff).
 pub fn snapshot_from_freeze_file_forced(path: &str, kind: FreezerKind) -> Result<C64Snapshot, String> {
     let data = fs::read(path).map_err(|e| format!("Failed to read freeze file: {}", e))?;
@@ -252,8 +252,8 @@ pub fn freezer_label(k: FreezerKind) -> &'static str {
     }
 }
 
-/// Append a hint to a VSF parse error when the bytes actually look like a freeze —
-/// the user likely needs to switch the input type to "Cartridge freeze".
+/// Append a hint to a VSF parse error when the bytes look like a freeze file:
+/// the input type should be set to "Cartridge freeze".
 pub fn vsf_hint(err: impl std::fmt::Display, bytes: &[u8]) -> String {
     match detect_freezer(bytes) {
         Some(kind) => format!(
@@ -369,16 +369,15 @@ pub fn snapshot_from_isepic_bytes(data: &[u8]) -> Result<C64Snapshot, String> {
             MAX_INSTRUCTIONS, cpu.pc
         )
     })?;
-    // Capture RAM + I/O + CPU port at the handoff RTI — the restore is now fully
-    // applied (the earlier $0092 point was mid-restore: it predates the second-stage
-    // zero-page restore, so resuming from it gave a wrong ZP and the game crashed).
+    // Capture RAM + I/O + CPU port at the handoff RTI, where the restore is fully
+    // applied including the second-stage zero-page restore.
     cpu.m.build_snapshot(&cpu, frozen_pc, frozen_p)
 }
 
 /* ====================== Final Cartridge III replay ====================== */
 
 /// FC3's restore runs several internal trampoline RTIs (e.g. the $0D57 depacker
-/// stage) before the FINAL handoff RTI to the frozen game PC. RTIs whose target
+/// stage) before the final handoff RTI to the frozen game PC. RTIs whose target
 /// lands inside the restore code keep the replay going; the first RTI targeting
 /// outside this range is the handoff.
 const FC3_RESTORE_RANGE: std::ops::RangeInclusive<u16> = 0x0200..=0x1075;
@@ -394,12 +393,12 @@ const FC3_MAX_INSTRUCTIONS: u64 = 30_000_000;
 /// (contiguous high load) + Phase-2 (RLE depack to $0403+) rebuild memory; the
 /// teardown then re-reads the freeze's page-2/3 image via ACPTR ($FFA5, served from
 /// the companion) and runs the frozen game's overlay-processing code, before the
-/// handoff RTI to the frozen program where we read the resulting state.
+/// handoff RTI to the frozen program, where the resulting state is read.
 ///
-/// Game RAM, page 2/3 and the structural zero page are reconstructed exactly.
-/// A few bytes are not: raster/frame-timing display counters, dead stack below
-/// SP, and the $00/$01 CPU-port monitor quirk. These do not affect resume;
-/// reproducing them exactly would need cycle-accurate VIC/CIA emulation.
+/// Game RAM, page 2/3 and the structural zero page are reconstructed. Not
+/// reproduced: raster and frame-timing display counters, dead stack below SP,
+/// and the $00/$01 CPU-port monitor quirk. Reproducing those would need a
+/// cycle-accurate VIC and CIA emulation.
 pub fn snapshot_from_fc3_bytes(fc: &[u8], companion: &[u8]) -> Result<C64Snapshot, String> {
     if fc.len() < 0x20 {
         return Err("FC3 `fc` stub too short".to_string());
@@ -463,7 +462,7 @@ pub fn snapshot_from_fc3_bytes(fc: &[u8], companion: &[u8]) -> Result<C64Snapsho
     cpu.m.build_snapshot(&cpu, frozen_pc, frozen_p)
 }
 
-/// Parse the decimal operand after the BASIC SYS token ($9E) → entry address.
+/// Parse the decimal operand after the BASIC SYS token ($9E) into an entry address.
 fn sys_target(body: &[u8]) -> Option<u16> {
     let idx = body.iter().position(|&b| b == 0x9E)?;
     let mut j = idx + 1;
@@ -571,7 +570,7 @@ impl Mem {
                 match r {
                     0x0D => 0x00,
                     0x04..=0x07 => 0xFF,
-                    // PRA/PRB: idle bus ($FF) under FC3 — see `fc3_idle_cia`.
+                    // PRA/PRB: idle bus ($FF) under FC3, see `fc3_idle_cia`.
                     0x00 | 0x01 if self.fc3_idle_cia => 0xFF,
                     _ => self.cia1[r],
                 }
@@ -727,7 +726,7 @@ struct Cpu {
     /// turbo getbyte at $0200 streams the `-fc` companion and the KERNAL serial
     /// (drive-code upload) calls are no-ops.
     fc3: Option<IsepicIo>,
-    /// FC3 ACPTR cursor: a SECOND read cursor over the `-fc` companion. After the
+    /// FC3 ACPTR cursor: a second read cursor over the `-fc` companion. After the
     /// turbo decompress, FC3's teardown re-reads the freeze's first 512 bytes via
     /// KERNAL ACPTR ($FFA5) to repopulate page 2/3 ($0200-$03FF); those bytes are
     /// the frozen page-2/3 image. Independent of the $0200 getbyte cursor.
@@ -993,8 +992,7 @@ impl Cpu {
     fn ld_y(&mut self, a: u16) { let v = self.m.read(a); self.y = v; self.set_zn(v); }
 
     fn step(&mut self) {
-        // ISEPIC replay: capture the snapshot at $0092 (decompressor done) and
-        // service the stubbed KERNAL routines.
+        // ISEPIC replay: service the stubbed KERNAL routines.
         if self.isepic.is_some() {
             match self.pc {
                 0xFFCF | 0xFFA5 => {
@@ -1024,8 +1022,8 @@ impl Cpu {
                     self.fc3_getbyte();
                     return;
                 }
-                // ACPTR: serve the page-2/3 image from the `-fc` companion (NOT a
-                // no-op — the teardown loads $0200-$03FF through it).
+                // ACPTR: serve the page-2/3 image from the `-fc` companion. Not a
+                // no-op; the teardown loads $0200-$03FF through it.
                 0xFFA5 => {
                     self.m.tick += 1;
                     self.fc3_acptr_byte();

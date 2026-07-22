@@ -1,12 +1,12 @@
-# VICE Snapshot → PRG / CRT Converter
+# VICE Snapshot to PRG / CRT Converter
 
 Converts VICE snapshots into self-restoring PRG files, EasyFlash CRT or Magic Desk CRT cartridges that boot directly on a real Commodore 64.
 
-The converter reconstructs the full machine state: CPU registers, RAM, Color RAM, VIC-II, SID, CIA1/CIA2, stack pointer, zero-page, vectors, I/O mode – everything needed to return to the exact snapshot moment.
+The converter reconstructs the full machine state: CPU registers, RAM, Color RAM, VIC-II, SID, CIA1/CIA2, stack pointer, zero-page, vectors, I/O mode. Everything needed to return to the exact snapshot moment.
 
 ## Status & License
 
-- **Version:** 2.2.0
+- **Version:** 2.3.0
 - **License:** MIT
 
 ## What it does
@@ -18,7 +18,7 @@ The converter reconstructs the full machine state: CPU registers, RAM, Color RAM
   - **EasyFlash CRT** with optional LOAD-intercept for embedded PRG files, or
   - **Magic Desk CRT** (8K cart mode, ROML only) with the same optional LOAD-intercept.
 
-Not every snapshot converts cleanly — some programs rely on hardware state that can't be faithfully reproduced from the file alone.
+Not every snapshot converts cleanly. Some programs rely on hardware state that can't be faithfully reproduced from the file alone.
 
 ## Downloads
 
@@ -47,7 +47,7 @@ This produces large uniform regions that the converter can use for restore code 
 ### Power-on pattern clearing (experimental, off by default)
 
 A freshly powered C64 (and VICE's default / Smart Attach RAM init) does not come up
-all-zero — it comes up in a fixed pattern of `$00`/`$FF` bytes in short (4-byte) runs.
+all-zero. It comes up in a fixed pattern of `$00`/`$FF` bytes in short (4-byte) runs.
 Those runs are too short for the free-area scan, so untouched RAM looks "used".
 
 The converter can optionally detect this power-on pattern and zero the regions that
@@ -81,8 +81,8 @@ If conversion fails due to insufficient free memory, the GUI offers to add RAM b
 ### PRG
 
 - Self-restoring executable.
-- Uses LZSA1-compressed segments (RAM, VIC, Color RAM).
-- Small, efficient restore stub.
+- Packed segments (RAM, VIC, Color RAM, zero page) in the selected format.
+- Small restore stub.
 - Returns to the snapshot PC/flags exactly.
 
 ### EasyFlash CRT
@@ -94,32 +94,32 @@ If conversion fails due to insufficient free memory, the GUI offers to add RAM b
 - Automatically picks trampoline address (`$0100` or `$0334`) based on stack position.
 
 **ROM layout:**
-- **ROML** (`$8000–$9FFF`): Restore code, decompressor, compressed blocks
-- **ROMH** (`$A000–$BFFF`): Startup vectors, LOAD/SAVE hook, file metadata
+- **ROML** (`$8000-$9FFF`): Restore code, decompressor, compressed blocks
+- **ROMH** (`$A000-$BFFF`): Startup vectors, LOAD/SAVE hook, file metadata
 
 ### Magic Desk CRT
 
 - Boots directly from cartridge via CBM80 signature.
-- 8K cart mode: ROML only (`$8000–$9FFF`), no ROMH.
+- 8K cart mode: ROML only (`$8000-$9FFF`), no ROMH.
 - Banked out at runtime via `$DE00` bit 7. This is reversible (it only drives
-  EXROM), so the cartridge can be banked back in — which is what makes the LOAD
-  hook possible.
+  EXROM), so the cartridge can be banked back in, which is what the LOAD
+  hook needs.
 - Minimum 8 banks, maximum 64 banks (512 KB).
 - Can embed PRG files and intercept `LOAD "NAME",8,1`, identical to EasyFlash.
 - Automatically picks trampoline address (`$0100` or `$0334`) based on stack position.
 
 **ROM layout (no embedded files):**
 - **Bank 0 ROML**: Boot code (CBM80) + payload start
-- **Banks 0–N ROML**: Restore code + relocated decompressor + compressed RAM
+- **Banks 0-N ROML**: Restore code + relocated decompressor + compressed RAM
 
 **ROM layout (with embedded files):**
 - **Bank 0 ROML** (directory): Boot code (`$8000`), LOAD handler (`$8400`),
   file metadata (`$9000`), filenames (`$9800`)
-- **Banks 1–N ROML**: Restore code + relocated decompressor + compressed RAM
-- **Banks N+1… ROML**: Embedded PRG file data
+- **Banks 1-N ROML**: Restore code + relocated decompressor + compressed RAM
+- **Banks N+1 and up ROML**: Embedded PRG file data
 
 Magic Desk has no ROMH, so (unlike EasyFlash, which keeps the handler/metadata in
-ROMH at `$A000–$BFFF`) the directory lives in bank 0. Only a small trampoline sits
+ROMH at `$A000-$BFFF`) the directory lives in bank 0. Only a small trampoline sits
 in C64 RAM; its address is picked with the same mechanism as EasyFlash (`$0100` or
 the cassette buffer `$0334`, based on the snapshot's stack pointer, or a manual
 `--hook-addr`). During a LOAD it banks the directory bank in, copies the requested
@@ -150,17 +150,25 @@ vice-snapshot-to-prg-converter-cli --magic-desk --include-dir ./prg input.vsf ou
 ```
 
 **Options:**
-- `--prg` / `--crt` / `--magic-desk` – Force format (optional, auto-detected from extension for PRG/CRT)
-- `--name <name>` – Cartridge name (max 32 chars, CRT only)
-- `--include-dir <dir>` – Embed PRG files from directory (EasyFlash or Magic Desk)
-- `--hook-addr <hex>` – Override LOAD/SAVE hook address (EasyFlash or Magic Desk; overrides the automatic `$0100`/`$0334` placement)
-- `--clear-poweron-ram` – Experimental, off by default: zero RAM regions still holding the C64 power-on pattern (see above)
+- `--prg` / `--crt` / `--magic-desk`: force format (optional, auto-detected from extension for PRG/CRT)
+- `--name <name>`: cartridge name (max 32 chars, CRT only)
+- `--include-dir <dir>`: embed PRG files from directory (EasyFlash or Magic Desk)
+- `--hook-addr <hex>`: override LOAD/SAVE hook address (EasyFlash or Magic Desk; overrides the automatic `$0100`/`$0334` placement)
+- `--format <fmt>`: compression format, one of `lzsa1`, `lzsa2`, `zx0`, `zx02`, `lzan-min`, `bolt`, `bb2` (default `lzsa1`, see Compression below)
+- `--vsf`: force VSF snapshot input instead of auto-detecting a cartridge freeze
+- `--freezer <type>`: convert a cartridge freeze; type is `auto`, `ar`, `isepic` or `fc3`
+- `--clear-poweron-ram`: experimental, off by default: zero RAM regions still holding the C64 power-on pattern (see above)
 
 Output files are overwritten without prompting.
 
 ### GUI
 
-The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type (EasyFlash or Magic Desk) from the dropdown. LOAD/SAVE hooking with an include directory and the hook-address controls (auto location or a manual address) work for both cartridge types. The experimental "Clear power-on RAM pattern" checkbox (off by default, with a confirmation dialog) is available for all output formats. If conversion fails, a dialog offers to add manual RAM blocks.
+The GUI provides the same functionality with file browsers and a CRT options tab. Select cartridge type (EasyFlash or Magic Desk) from the dropdown. LOAD/SAVE hooking with an include directory and the hook-address controls (auto location or a manual address) work for both cartridge types. The Compression dropdown selects the pack format. The experimental "Clear power-on RAM pattern" checkbox (off by default, with a confirmation dialog) is available for all output formats. If conversion fails, a dialog offers to add manual RAM blocks.
+
+Conversion runs in the background, so the window stays responsive. A dialog shows the
+current step and offers Cancel. Cancelling takes effect once the step in progress
+finishes, which with the slower formats can mean waiting for the RAM block to finish
+packing. Temporary files are removed whether the run succeeds, fails or is cancelled.
 
 ### Recommended workflow
 
@@ -181,15 +189,39 @@ The GUI provides the same functionality with file browsers and a CRT options tab
 2. Restores Color RAM, VIC-II and SID registers.
 3. Restores CIA state without triggering timers prematurely.
 4. Restores zero page and switches I/O mode.
-5. Decompresses LZSA blocks into RAM.
+5. Decompresses the packed blocks into RAM.
 6. Restores page 1, stack and system vectors.
 7. Executes RTI back to the snapshot's PC and flags.
 
-Compression uses LZSA1, which approaches LZ4-level decoding speed on 6502 while keeping the decompressor compact.
+## Compression
+
+Packing is done by [lzan](https://github.com/tommyo123/lzan), which produces the raw
+stream for each format. The matching 6502 decruncher is assembled into the output, so
+nothing beyond the converter is needed to run the result.
+
+Pick a format with `--format` on the CLI or the Compression dropdown in the GUI:
+
+| Format | Notes |
+| --- | --- |
+| `lzsa1` | Default. Fast to pack and fast to decrunch. |
+| `lzsa2` | Smaller output, very slow to pack. |
+| `zx0` | Smaller output, very slow to pack. |
+| `zx02` | Smaller output, very slow to pack. |
+| `lzan-min` | Smaller output, very slow to pack. |
+| `bolt` | Fastest decrunch on the C64. |
+| `bb2` | ByteBoozer2. |
+
+Packing time is a one-off cost on the PC. Decrunch time is what the C64 spends on
+startup. The formats marked very slow can take minutes on a full 64K snapshot.
+
+All formats are checked against the same limits: the relocated decruncher has to fit in
+page 1 alongside the stack, and the packed RAM block has to leave enough headroom for
+in-place decompression. A snapshot that does not fit is rejected with an error rather
+than producing a broken file.
 
 ## Troubleshooting
 
-**"Failed to allocate block …"**
+**"Failed to allocate block ..."**
 RAM was not uniform. Clear RAM with `f 0000 ffff 00` and retry. Alternatively, use the GUI to add manual RAM blocks.
 
 **Restore boots but crashes**
@@ -210,8 +242,13 @@ cargo build --release --bin vice-snapshot-to-prg-converter-cli
 cargo build --release
 ```
 
-## Credits
+## Third-party code
 
-- Emmanuel Marty – LZSA
-- The VICE team
-- Various freezer cartridges for historical inspiration
+- [lzan](https://github.com/tommyo123/lzan) provides the packers for every supported
+  format. It is a normal cargo git dependency, pinned in `Cargo.lock`.
+- [asm6502](https://github.com/tommyo123/asm6502) assembles the generated 6502 source.
+- The embedded LZSA1 and LZSA2 6502 decrunchers derive from Emmanuel Marty's reference
+  decompressors, used under the zlib license. See `LICENSE.zlib-lzsa.md`.
+- The ZX0, ZX02 and ByteBoozer2 decrunchers derive from their upstream 6502
+  implementations. Each decruncher source in `src/decrunchers/` carries its own
+  attribution and license header.

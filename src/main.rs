@@ -18,15 +18,18 @@ use fltk::window::Window;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::Duration;
 
-use vice_snapshot_to_prg_converter::config::{Config, CrtConfig, VERSION, InputMode, FreezeMethod};
+use vice_snapshot_to_prg_converter::config::{finish_conversion, Config, CrtConfig, VERSION, InputMode, FreezeMethod, PackFormat, WorkDirGuard};
 use vice_snapshot_to_prg_converter::convert_snapshot::ConvertSnapshot;
 use vice_snapshot_to_prg_converter::convert_snapshot_crt::ConvertSnapshotCRT;
 use vice_snapshot_to_prg_converter::convert_snapshot_magic_desk_crt::ConvertSnapshotMagicDeskCRT;
+use vice_snapshot_to_prg_converter::progress::{is_cancelled_error, Progress};
 use vice_snapshot_to_prg_converter::util::paths_refer_to_same_file;
 
 const WINDOW_WIDTH: i32 = 720;
-const WINDOW_HEIGHT: i32 = 795;
+const WINDOW_HEIGHT: i32 = 885;
 const MARGIN: i32 = 25;
 const FIELD_HEIGHT: i32 = 35;
 const BUTTON_HEIGHT: i32 = 40;
@@ -111,7 +114,6 @@ fn main() {
 
     let mut y_pos = MARGIN;
 
-    // Create tabs
     let tabs = Tabs::default()
         .with_pos(MARGIN - 5, y_pos)
         .with_size(WINDOW_WIDTH - 2 * MARGIN + 10, TAB_HEIGHT);
@@ -326,8 +328,8 @@ fn main() {
     let mut freezer_choice = menu::Choice::default()
         .with_pos(MARGIN + 380, y_pos)
         .with_size(WINDOW_WIDTH - (MARGIN + 380) - MARGIN, 25);
-    // NB: FLTK treats '/' as a submenu separator, so avoid it here (a "/"-label
-    // would render as a nested submenu). Commas keep this one flat menu item.
+    // FLTK treats '/' as a submenu separator, so a label with '/' becomes a
+    // nested submenu. Commas keep this one flat menu item.
     freezer_choice.add_choice("Auto-detect|Self-restoring (AR, SS5, FM, Expert)|ISEPIC|Final Cartridge III");
     freezer_choice.set_value(0); // Default: Auto-detect
     freezer_choice.deactivate(); // Enabled only for "Cartridge freeze"
@@ -344,6 +346,24 @@ fn main() {
     clear_poweron_check.set_checked(false);
 
     y_pos += 30;
+
+    // Shared option (all output formats): compression format for the snapshot blocks.
+    let mut format_label = Frame::default()
+        .with_pos(MARGIN, y_pos)
+        .with_size(105, 25)
+        .with_label("Compression:");
+    format_label.set_label_size(13);
+    format_label.set_align(enums::Align::Left | enums::Align::Inside);
+
+    let mut format_choice = menu::Choice::default()
+        .with_pos(MARGIN + 110, y_pos)
+        .with_size(300, 25);
+    // Labels in PackFormat::all() order; the selected index maps back to that array.
+    let format_labels: Vec<&str> = PackFormat::all().iter().map(|f| f.label()).collect();
+    format_choice.add_choice(&format_labels.join("|"));
+    format_choice.set_value(0); // Default: LZSA1
+
+    y_pos += 45;
 
     // Status display (shared)
     let mut status_label = Frame::default()
@@ -411,6 +431,7 @@ fn main() {
     let tabs_rc = Rc::new(RefCell::new(tabs.clone()));
     let input_type_choice_rc = Rc::new(RefCell::new(input_type_choice.clone()));
     let freezer_choice_rc = Rc::new(RefCell::new(freezer_choice.clone()));
+    let format_choice_rc = Rc::new(RefCell::new(format_choice.clone()));
 
     // Confirm before enabling the experimental power-on RAM clearing pass;
     // decline leaves it unchecked.
@@ -435,7 +456,7 @@ fn main() {
     }
 
     // Extra RAM blocks for allocation failures (shared between PRG and CRT)
-    // Each block is (address, count) - cleared on snapshot change or tab switch
+    // Each block is (address, count); cleared on snapshot change or tab switch
     let extra_ram_blocks_rc: Rc<RefCell<Vec<(u16, u16)>>> = Rc::new(RefCell::new(Vec::new()));
 
     // Input-type callback: the "Force freezer" override is only meaningful when
@@ -454,9 +475,9 @@ fn main() {
     // CRT cartridge type callback
     //
     // EasyFlash and Magic Desk both support LOAD/SAVE hooking with embedded PRG
-    // files and share the same trampoline placement mechanism (auto from the
-    // snapshot's stack pointer, or a manual address), so the hook controls
-    // simply follow the hook checkbox for both types.
+    // files and use the same trampoline placement (auto from the snapshot's
+    // stack pointer, or a manual address). The hook controls follow the hook
+    // checkbox for both types.
     {
         let hook_check = crt_hook_check_rc.clone();
         let auto_location_check = crt_auto_location_check_rc.clone();
@@ -478,7 +499,7 @@ fn main() {
         });
     }
 
-    // CRT hook checkbox callback - enable/disable related fields
+    // CRT hook checkbox callback: enable or disable related fields
     {
         let auto_location_check = crt_auto_location_check_rc.clone();
         let addr_field = crt_addr_field_rc.clone();
@@ -491,7 +512,6 @@ fn main() {
                 auto_location_check.borrow_mut().activate();
                 include_field.borrow_mut().activate();
                 include_btn.borrow_mut().activate();
-                // addr_field only enabled if auto_location is NOT checked
                 if !auto_location_check.borrow().is_checked() {
                     addr_field.borrow_mut().activate();
                 }
@@ -505,13 +525,12 @@ fn main() {
         });
     }
 
-    // CRT auto location checkbox callback - enable/disable addr field
+    // CRT auto location checkbox callback: enable or disable the address field
     {
         let addr_field = crt_addr_field_rc.clone();
         let hook_check = crt_hook_check_rc.clone();
 
         crt_auto_location_check.clone().set_callback(move |check| {
-            // Only toggle addr_field if hook is enabled
             if hook_check.borrow().is_checked() {
                 if check.is_checked() {
                     addr_field.borrow_mut().deactivate();
@@ -522,7 +541,7 @@ fn main() {
         });
     }
 
-    // CRT address field - format and validate on change
+    // CRT address field: format and validate on change
     {
         let addr_field = crt_addr_field_rc.clone();
 
@@ -544,7 +563,6 @@ fn main() {
                         if addr > 0xFF00 {
                             addr = 0xFF00;
                         }
-                        // Format with $ prefix
                         field.set_value(&format!("${:04X}", addr));
                     }
                 }
@@ -730,14 +748,26 @@ fn main() {
         let extra_blocks = extra_ram_blocks_rc.clone();
         let input_type = input_type_choice_rc.clone();
         let freezer = freezer_choice_rc.clone();
+        let format_sel = format_choice_rc.clone();
 
         convert_btn.set_callback(move |btn| {
-            let tabs_val = tabs.borrow();
-            let active_tab = tabs_val.value().map(|w| w.label()).unwrap_or_default();
+            // Read the active tab and release the borrow: the event loop keeps running while a
+            // conversion is in flight, so no RefCell may stay borrowed across it.
+            let active_tab = {
+                let tabs_val = tabs.borrow();
+                tabs_val.value().map(|w| w.label()).unwrap_or_default()
+            };
             let is_crt = active_tab.contains("CRT");
 
             // How to interpret the input file (VSF vs cartridge freeze + forced method).
             let input_mode = read_input_mode(input_type.borrow().value(), freezer.borrow().value());
+
+            // Selected compression format (index maps to PackFormat::all()).
+            let all_formats = PackFormat::all();
+            let pack_format = all_formats
+                .get(format_sel.borrow().value().max(0) as usize)
+                .copied()
+                .unwrap_or_default();
 
             status_buffer.borrow_mut().set_text("");
 
@@ -829,49 +859,63 @@ fn main() {
                     }
                     app::awake();
 
-                    let result = CrtConfig::auto().map_err(|e| e.to_string()).and_then(|mut config| {
-                        config.base_config.input_mode = input_mode;
-                        config.base_config.clear_poweron_ram = clear_poweron_ram;
-                        if !cart_name.is_empty() {
-                            config.cartridge_name = Some(cart_name.clone());
-                        }
-                        if hook_enabled && !include_dir.is_empty() {
-                            config.include_dir = Some(include_dir.clone());
-                            config.patch_load_save = true;
-                            config.auto_location = auto_location;
+                    let progress = Progress::new();
+                    let result = {
+                        let progress_for_job = progress.clone();
+                        let (input_path, output_path) = (input_path.clone(), output_path.clone());
+                        let (cart_name, include_dir, addr_text) =
+                            (cart_name.clone(), include_dir.clone(), addr_text.clone());
+                        run_with_progress(
+                            &format!("Converting to {} CRT", cart_type_name),
+                            &progress,
+                            move || {
+                                let mut config = CrtConfig::auto().map_err(|e| e.to_string())?;
+                                config.base_config.input_mode = input_mode;
+                                config.base_config.clear_poweron_ram = clear_poweron_ram;
+                                config.base_config.pack_format = pack_format;
+                                config.base_config.progress = progress_for_job;
+                                if !cart_name.is_empty() {
+                                    config.cartridge_name = Some(cart_name);
+                                }
+                                if hook_enabled && !include_dir.is_empty() {
+                                    config.include_dir = Some(include_dir);
+                                    config.patch_load_save = true;
+                                    config.auto_location = auto_location;
 
-                            // Parse manual trampoline address if not using auto location
-                            if !auto_location && !addr_text.is_empty() {
-                                let cleaned = addr_text.trim()
-                                    .trim_start_matches('$')
-                                    .trim_start_matches("0x")
-                                    .trim_start_matches("0X");
-                                if let Ok(addr) = u16::from_str_radix(cleaned, 16) {
-                                    if addr >= 0x0100 {
-                                        config.trampoline_address = Some(addr);
+                                    // Parse manual trampoline address if not using auto location
+                                    if !auto_location && !addr_text.is_empty() {
+                                        let cleaned = addr_text.trim()
+                                            .trim_start_matches('$')
+                                            .trim_start_matches("0x")
+                                            .trim_start_matches("0X");
+                                        if let Ok(addr) = u16::from_str_radix(cleaned, 16) {
+                                            if addr >= 0x0100 {
+                                                config.trampoline_address = Some(addr);
+                                            }
+                                        }
                                     }
                                 }
-                            }
-                        }
 
-                        let work_path = config.base_config.work_path.clone();
-                        let (conversion_result, poweron_cleared) = if is_magic_desk {
-                            let converter = ConvertSnapshotMagicDeskCRT::with_extra_blocks(config, current_blocks);
-                            let r = converter.convert(&input_path, &output_path);
-                            (r, converter.poweron_cleared())
-                        } else {
-                            let converter = ConvertSnapshotCRT::with_extra_blocks(config, current_blocks);
-                            let r = converter.convert(&input_path, &output_path);
-                            (r, converter.poweron_cleared())
-                        };
-
-                        let _ = cleanup_work_dir(&work_path);
-                        conversion_result.map(|_| poweron_cleared)
-                    });
+                                let work_path = config.base_config.work_path.clone();
+                                let outcome = {
+                                    let _temp = WorkDirGuard::new(work_path.clone());
+                                    if is_magic_desk {
+                                        let converter = ConvertSnapshotMagicDeskCRT::with_extra_blocks(config, current_blocks);
+                                        converter.convert(&input_path, &output_path)
+                                            .map(|_| converter.poweron_cleared())
+                                    } else {
+                                        let converter = ConvertSnapshotCRT::with_extra_blocks(config, current_blocks);
+                                        converter.convert(&input_path, &output_path)
+                                            .map(|_| converter.poweron_cleared())
+                                    }
+                                };
+                                finish_conversion(outcome, &work_path, &output_path)
+                            },
+                        )
+                    };
 
                     match result {
                         Ok(poweron_cleared) => {
-                            // Success - clear extra blocks
                             extra_blocks.borrow_mut().clear();
                             let mut success_msg = format!(
                                 "Success!\n\nSnapshot successfully converted to {} CRT:\n{}",
@@ -888,9 +932,16 @@ fn main() {
                             status_buffer.borrow_mut().set_text(&success_msg);
                             break;
                         }
+                        Err(e) if is_cancelled_error(&e) => {
+                            status_buffer.borrow_mut().set_text(
+                                "Conversion cancelled.\n\nNo converted file was produced, \
+                                 and the temporary files have been removed.",
+                            );
+                            break;
+                        }
                         Err(e) => {
                             if is_allocation_error(&e) {
-                                // Allocation failure - offer to add RAM block
+                                // Allocation failure: offer to add a RAM block
                                 status_buffer.borrow_mut().set_text(&format!("Conversion failed:\n\n{}", e));
 
                                 let choice = dialog::choice2_default(
@@ -901,7 +952,6 @@ fn main() {
                                 );
 
                                 if choice == Some(1) {
-                                    // User wants to add a block
                                     if let Some((addr, count)) = show_add_ram_block_dialog() {
                                         extra_blocks.borrow_mut().push((addr, count));
                                         let end_addr = addr + count - 1;
@@ -911,14 +961,13 @@ fn main() {
                                             addr, end_addr, count
                                         ));
                                         buf.append("Retrying conversion...\n\n");
-                                        // Continue loop to retry
                                         continue;
                                     }
                                 }
                                 // User cancelled or didn't add block
                                 break;
                             } else {
-                                // Other error - don't retry
+                                // Other error: no retry
                                 let error_msg = format!("Conversion failed:\n\n{}", e);
                                 status_buffer.borrow_mut().set_text(&error_msg);
                                 break;
@@ -994,36 +1043,34 @@ fn main() {
                     }
                     app::awake();
 
-                    let config_result = Config::auto();
                     let clear_poweron_ram = clear_poweron.borrow().is_checked();
 
-                    let result = match config_result {
-                        Ok(mut config) => {
+                    let progress = Progress::new();
+                    let result = {
+                        let progress_for_job = progress.clone();
+                        let (input_path, output_path) = (input_path.clone(), output_path.clone());
+                        run_with_progress("Converting snapshot", &progress, move || {
+                            let mut config = Config::auto().map_err(|e| {
+                                format!("Failed to initialize configuration: {}", e)
+                            })?;
                             config.input_mode = input_mode;
                             config.clear_poweron_ram = clear_poweron_ram;
+                            config.pack_format = pack_format;
+                            config.progress = progress_for_job;
                             let work_path = config.work_path.clone();
 
-                            let converter = ConvertSnapshot::with_extra_blocks(config, current_blocks);
-                            let conversion_result = converter.convert(&input_path, &output_path);
-                            let poweron_cleared = converter.poweron_cleared();
-
-                            let cleanup_result = cleanup_work_dir(&work_path);
-
-                            match (conversion_result, cleanup_result) {
-                                (Ok(()), Ok(())) => Ok(poweron_cleared),
-                                (Ok(()), Err(cleanup_err)) => {
-                                    Err(format!("Conversion succeeded, but failed to clean up temporary directory:\n{}", cleanup_err))
-                                },
-                                (Err(conv_err), Ok(())) => Err(conv_err),
-                                (Err(conv_err), Err(_)) => Err(conv_err),
-                            }
-                        },
-                        Err(e) => Err(format!("Failed to initialize configuration: {}", e)),
+                            let outcome = {
+                                let _temp = WorkDirGuard::new(work_path.clone());
+                                let converter = ConvertSnapshot::with_extra_blocks(config, current_blocks);
+                                converter.convert(&input_path, &output_path)
+                                    .map(|_| converter.poweron_cleared())
+                            };
+                            finish_conversion(outcome, &work_path, &output_path)
+                        })
                     };
 
                     match result {
                         Ok(poweron_cleared) => {
-                            // Success - clear extra blocks
                             extra_blocks.borrow_mut().clear();
                             let mut success_msg = format!(
                                 "Success!\n\nSnapshot image successfully converted to:\n{}",
@@ -1040,9 +1087,16 @@ fn main() {
                             status_buffer.borrow_mut().set_text(&success_msg);
                             break;
                         }
+                        Err(e) if is_cancelled_error(&e) => {
+                            status_buffer.borrow_mut().set_text(
+                                "Conversion cancelled.\n\nNo converted file was produced, \
+                                 and the temporary files have been removed.",
+                            );
+                            break;
+                        }
                         Err(e) => {
                             if is_allocation_error(&e) {
-                                // Allocation failure - offer to add RAM block
+                                // Allocation failure: offer to add a RAM block
                                 status_buffer.borrow_mut().set_text(&format!("Conversion failed:\n\n{}", e));
 
                                 let choice = dialog::choice2_default(
@@ -1053,7 +1107,6 @@ fn main() {
                                 );
 
                                 if choice == Some(1) {
-                                    // User wants to add a block
                                     if let Some((addr, count)) = show_add_ram_block_dialog() {
                                         extra_blocks.borrow_mut().push((addr, count));
                                         let end_addr = addr + count - 1;
@@ -1063,14 +1116,13 @@ fn main() {
                                             addr, end_addr, count
                                         ));
                                         buf.append("Retrying conversion...\n\n");
-                                        // Continue loop to retry
                                         continue;
                                     }
                                 }
                                 // User cancelled or didn't add block
                                 break;
                             } else {
-                                // Other error - don't retry
+                                // Other error: no retry
                                 let error_msg = format!("Conversion failed:\n\n{}", e);
                                 status_buffer.borrow_mut().set_text(&error_msg);
                                 break;
@@ -1084,12 +1136,16 @@ fn main() {
         });
     }
 
+    // `app::quit()` only hides the windows. A running conversion polls the quit flag, so set
+    // it first to let the conversion stop and clean up.
     quit_btn.set_callback(|_| {
+        app::program_should_quit(true);
         app::quit();
     });
 
     window.set_callback(|_| {
         if app::event() == enums::Event::Close {
+            app::program_should_quit(true);
             app::quit();
         }
     });
@@ -1392,11 +1448,111 @@ IMPORTANT LIMITATIONS
     }
 }
 
-/// Clean up the temporary work directory
-fn cleanup_work_dir(work_path: &Path) -> Result<(), String> {
-    if work_path.exists() {
-        std::fs::remove_dir_all(work_path)
-            .map_err(|e| format!("Failed to remove work directory {:?}: {}", work_path, e))?;
-    }
-    Ok(())
+/// Run `job` on a worker thread while the event loop keeps running, showing a modal window that
+/// names the current step and offers Cancel.
+///
+/// The worker is always joined before this returns, so by the time the caller sees the result the
+/// job has finished unwinding and its temporary files are gone. Cancellation is cooperative: the
+/// job notices the flag between steps, so a cancel takes effect once the current step completes.
+fn run_with_progress<F>(title: &str, progress: &Progress, job: F) -> Result<u32, String>
+where
+    F: FnOnce() -> Result<u32, String> + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        // A panic in the job must still produce a result, otherwise the loop below would wait
+        // forever. The work-directory guard runs during the unwind either way.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job))
+            .unwrap_or_else(|_| Err("Conversion failed: internal error.".to_string()));
+        let _ = tx.send(outcome);
+        app::awake();
+    });
+
+    const W: i32 = 470;
+    const H: i32 = 175;
+    let mut win = Window::default().with_size(W, H).with_label(title);
+
+    let mut step_frame = Frame::default()
+        .with_pos(20, 22)
+        .with_size(W - 40, 26)
+        .with_label("Starting...");
+    step_frame.set_align(Align::Left | Align::Inside);
+    step_frame.set_label_size(14);
+
+    let mut note = Frame::default()
+        .with_pos(20, 54)
+        .with_size(W - 40, 44)
+        .with_label("The slower compression formats can take a while.");
+    note.set_align(Align::Left | Align::Inside | Align::Wrap);
+    note.set_label_size(12);
+
+    let mut cancel_btn = Button::default()
+        .with_pos((W - 120) / 2, H - 54)
+        .with_size(120, 32)
+        .with_label("Cancel");
+
+    win.end();
+    win.make_modal(true);
+
+    // Acknowledge a cancel request on screen. The window stays open: the worker still owns the
+    // work directory and has to unwind before the result can be reported.
+    let acknowledge = {
+        let progress = progress.clone();
+        let mut note = note.clone();
+        let mut cancel_btn = cancel_btn.clone();
+        move || {
+            progress.cancel();
+            cancel_btn.deactivate();
+            cancel_btn.set_label("Cancelling");
+            note.set_label("Cancelling - the step in progress has to finish first.");
+        }
+    };
+
+    // The title-bar close means cancel, never quit, and gives the same feedback as the button.
+    win.set_callback({
+        let mut acknowledge = acknowledge.clone();
+        move |_| acknowledge()
+    });
+    cancel_btn.set_callback({
+        let mut acknowledge = acknowledge.clone();
+        move |_| acknowledge()
+    });
+
+    win.show();
+
+    let mut shown = String::new();
+    let outcome = loop {
+        match rx.try_recv() {
+            Ok(result) => break result,
+            // The worker always sends before it ends, so a closed channel means it died
+            // without reporting. Bail out rather than pump events forever.
+            Err(mpsc::TryRecvError::Disconnected) => {
+                break Err("Conversion failed: the worker stopped unexpectedly.".to_string())
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        let step = progress.current_step();
+        if step != shown {
+            step_frame.set_label(&step);
+            shown = step;
+        }
+        // A short timeout keeps the step label live while the worker is busy. `Ok(false)` only
+        // means the timeout expired with nothing to dispatch, so it carries no meaning here;
+        // `Err` is an interrupted wait, where a brief pause avoids a spin.
+        if app::wait_for(0.1).is_err() {
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        // Check the quit flag here. Ask the job to stop, but keep pumping events until it
+        // returns so its cleanup runs.
+        if app::should_program_quit() {
+            progress.cancel();
+        }
+    };
+
+    win.hide();
+    // fltk widgets are not freed when their Rust handle drops, so the window and its children
+    // (and the callbacks holding the Progress clones) have to be released explicitly.
+    Window::delete(win);
+    let _ = worker.join();
+    outcome
 }

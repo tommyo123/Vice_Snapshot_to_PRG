@@ -64,9 +64,12 @@ impl MakePRGAsm {
     pub fn generate_prg(&self, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         let relocated_binary = self.assemble_relocated_code()?;
 
-        if relocated_binary.len() > 256 {
+        // The relocated decoder shares page 1 with the stack (which grows down from $01FF during
+        // the RAM decode), so it must stay below the deepest decoder call chain. 246 bytes leaves
+        // headroom for that chain.
+        if relocated_binary.len() > 246 {
             return Err(format!(
-                "Relocated code too large: {} bytes (max 256)",
+                "Relocated code too large: {} bytes (max 246)",
                 relocated_binary.len()
             ).into());
         }
@@ -125,20 +128,23 @@ impl MakePRGAsm {
         // Convert Windows backslashes to forward slashes for cross-platform compatibility
         let work_path = work.replace('\\', "/");
 
-        format!(r#"; C64 LZSA1 Snapshot Loader - Conservative Optimization
+        // Format-specific pieces: LZSA1 uses the inline decoder at the end of this template; other
+        // formats supply a caller-seeded decruncher, its seed equates, and a `full_decomp` entry.
+        // All confine their zero-page use to the preserved $F8-$FF window.
+        let format = self.config.pack_format;
+        let entry = crate::pack_format::entry_label(format);
+        let zp_equates = crate::pack_format::seed_equates(format)
+            .unwrap_or_else(|| crate::decoders_lzsa1_prg::LZSA1_ZP_EQUATES.to_string());
+        let main_decoder = crate::pack_format::main_body(format)
+            .unwrap_or_else(|| crate::decoders_lzsa1_prg::LZSA1_MAIN_DECODER.to_string());
+
+        format!(r#"; C64 snapshot loader
 *=$0801
 
 ; BASIC stub: SYS 2061
 .byte $0B,$08,$0A,$00,$9E,$32,$30,$36,$31,$00,$00,$00
 
-; LZSA1 zero page variables
-LZSA_SRC_LO = $FC
-LZSA_SRC_HI = $FD
-LZSA_DST_LO = $FE
-LZSA_DST_HI = $FF
-LZSA_CMDBUF = $F9
-LZSA_WINPTR = $FA
-LZSA_OFFSET = $FA
+%%ZP_EQUATES%%
 
 start:
     SEI
@@ -160,28 +166,11 @@ start:
     LDX #$FF
     TXS
 
-    LDA #<color_data
-    STA LZSA_SRC_LO
-    LDA #>color_data
-    STA LZSA_SRC_HI
-    LDA #$00
-    STA LZSA_DST_LO
-    LDA #$D8
-    STA LZSA_DST_HI
-    JSR decompress_lzsa1
+%%DECODE_COLOR%%
 
-    LDA #<vic_data
-    STA LZSA_SRC_LO
-    LDA #>vic_data
-    STA LZSA_SRC_HI
-    LDA #$00
-    STA LZSA_DST_LO
-    LDA #$D0
-    STA LZSA_DST_HI
-    JSR decompress_lzsa1
+%%DECODE_VIC%%
 
-    ; OPTIMIZATION: Setup VIC raster position early (moved from $01xx)
-    ; This is 100% safe - no interrupts enabled yet
+    ; Set VIC raster position; interrupts are not enabled yet
     LDA $D011
     STA $D011
     LDA $D012
@@ -193,18 +182,10 @@ start:
     LDA #$FF
     STA $D019
 
-    LDA #<sid_data
-    STA LZSA_SRC_LO
-    LDA #>sid_data
-    STA LZSA_SRC_HI
-    LDA #$00
-    STA LZSA_DST_LO
-    LDA #$D4
-    STA LZSA_DST_HI
-    JSR decompress_lzsa1
+%%DECODE_SID%%
 
 ; =============================================================================
-; CIA1 Complete Setup (100% safe - no timers started yet)
+; CIA1 setup, timers not started yet
 ; =============================================================================
     LDA #$7F
     STA $DC0D
@@ -259,7 +240,7 @@ start:
     LDA cia1_data+8
     STA $DC08
 
-    ; SDR and control registers (WITHOUT start bit - safe!)
+    ; SDR and control registers, without the start bit
     LDA cia1_data+12
     STA $DC0C
     LDA cia1_data+14
@@ -270,7 +251,7 @@ start:
     STA $DC0F
 
 ; =============================================================================
-; CIA2 Complete Setup (100% safe - no timers started yet)
+; CIA2 setup, timers not started yet
 ; =============================================================================
     LDA #$7F
     STA $DD0D
@@ -342,7 +323,7 @@ start:
     STA LZSA_DST_LO
     LDA #$00
     STA LZSA_DST_HI
-    JSR decompress_lzsa1
+    JSR %%ENTRY%%
 
     ; Switch to RAM-only mode
     LDA #$34
@@ -404,7 +385,7 @@ CPLP:
     LDA #>($10000 - RAM_DATA_SIZE + RELOCATED_SIZE)
     STA LZSA_SRC_HI
 
-    ; Start at $0200 - skip $0100-$01FF!
+    ; Start at $0200; $0100-$01FF holds the relocated decompressor
     LDA #$00
     STA LZSA_DST_LO
     LDA #$02
@@ -440,167 +421,24 @@ ram_data_end:
 RAM_DATA_SIZE = ram_data_end-ram_data_start
 RAM_DATA_END = ram_data_end
 
-; =============================================================================
-; LZSA1 Decompressor
-; =============================================================================
-decompress_lzsa1:
-    LDY #0
-    LDX #0
-
-cp_length:
-    LDA (LZSA_SRC_LO),Y
-    INC LZSA_SRC_LO
-    BNE cp_skip0
-    INC LZSA_SRC_HI
-
-cp_skip0:
-    STA LZSA_CMDBUF
-    AND #$70
-    LSR
-    BEQ lz_offset
-    LSR
-    LSR
-    LSR
-    CMP #$07
-    BCC cp_got_len
-    JSR get_length
-    STX cp_npages+1
-
-cp_got_len:
-    TAX
-
-cp_byte:
-    LDA (LZSA_SRC_LO),Y
-    STA (LZSA_DST_LO),Y
-    INC LZSA_SRC_LO
-    BNE cp_skip1
-    INC LZSA_SRC_HI
-cp_skip1:
-    INC LZSA_DST_LO
-    BNE cp_skip2
-    INC LZSA_DST_HI
-cp_skip2:
-    DEX
-    BNE cp_byte
-cp_npages:
-    LDA #0
-    BEQ lz_offset
-    DEC cp_npages+1
-    BCC cp_byte
-
-lz_offset:
-    LDA (LZSA_SRC_LO),Y
-    INC LZSA_SRC_LO
-    BNE offset_lo
-    INC LZSA_SRC_HI
-
-offset_lo:
-    STA LZSA_OFFSET+0
-
-    LDA #$FF
-    BIT LZSA_CMDBUF
-    BPL offset_hi
-
-    LDA (LZSA_SRC_LO),Y
-    INC LZSA_SRC_LO
-    BNE offset_hi
-    INC LZSA_SRC_HI
-
-offset_hi:
-    STA LZSA_OFFSET+1
-
-lz_length:
-    LDA LZSA_CMDBUF
-    AND #$0F
-    ADC #$03
-    CMP #$12
-    BCC got_lz_len
-    JSR get_length
-
-got_lz_len:
-    INX
-    EOR #$FF
-    TAY
-    EOR #$FF
-
-get_lz_dst:
-    ADC LZSA_DST_LO
-    STA LZSA_DST_LO
-    INY
-    BCS get_lz_win
-    BEQ get_lz_win
-    DEC LZSA_DST_HI
-
-get_lz_win:
-    CLC
-    ADC LZSA_OFFSET+0
-    STA LZSA_WINPTR+0
-    LDA LZSA_DST_HI
-    ADC LZSA_OFFSET+1
-    STA LZSA_WINPTR+1
-
-lz_byte:
-    LDA (LZSA_WINPTR),Y
-    STA (LZSA_DST_LO),Y
-    INY
-    BNE lz_byte
-    INC LZSA_DST_HI
-    DEX
-    BNE lz_more
-    JMP cp_length
-
-lz_more:
-    INC LZSA_WINPTR+1
-    LDY #$00
-    BEQ lz_byte
-
-get_length:
-    CLC
-    ADC (LZSA_SRC_LO),Y
-    INC LZSA_SRC_LO
-    BNE skip_inc
-    INC LZSA_SRC_HI
-
-skip_inc:
-    BCC got_length
-    CLC
-    TAX
-
-extra_byte:
-    JSR get_byte
-    PHA
-    TXA
-    BEQ extra_word
-
-check_length:
-    PLA
-    BNE got_length
-    DEX
-got_length:
-    RTS
-
-extra_word:
-    JSR get_byte
-    TAX
-    BNE check_length
-
-finished:
-    PLA
-    PLA
-    PLA
-    RTS
-
-get_byte:
-    LDA (LZSA_SRC_LO),Y
-    INC LZSA_SRC_LO
-    BNE got_byte
-    INC LZSA_SRC_HI
-got_byte:
-    RTS
-"#, work_path, work_path, work_path, work_path, work_path, work_path, work_path, work_path)
+%%MAIN_DECODER%%"#, work_path, work_path, work_path, work_path, work_path, work_path, work_path, work_path)
+        // The loader runs at $0801 and the relocated decoder sits in page 1, so $0200-$05FF is
+        // free RAM here and serves as the I/O scratch.
+        .replace("%%DECODE_COLOR%%", &crate::pack_format::io_decode_block(format, "color_data", 0xD8, 1024, "color", 0x02))
+        .replace("%%DECODE_VIC%%", &crate::pack_format::io_decode_block(format, "vic_data", 0xD0, 47, "vic", 0x02))
+        .replace("%%DECODE_SID%%", &crate::pack_format::io_decode_block(format, "sid_data", 0xD4, 25, "sid", 0x02))
+        .replace("%%ZP_EQUATES%%", &zp_equates)
+        .replace("%%ENTRY%%", entry)
+        .replace("%%MAIN_DECODER%%", &main_decoder)
     }
 
     fn generate_relocated_decompressor(&self) -> String {
+        // Non-LZSA1 formats supply their own $0100 body (caller-seeded, jumping to block 9 on
+        // completion). LZSA1 uses the page-1 decoder below.
+        if let Some(body) = crate::pack_format::relocated_body(self.config.pack_format, self.block9_addr) {
+            return format!("*=$0100\n{}", body);
+        }
+
         format!(r#"*=$0100
 
 LZSA_SRC_LO = $FC
@@ -754,7 +592,7 @@ extra_word:
     BNE check_length
 
 finished:
-    ; Decompression complete - jump to block 9
+    ; Decompression complete; jump to block 9
     JMP ${:04X}
 
 get_byte:

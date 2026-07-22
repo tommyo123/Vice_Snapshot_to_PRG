@@ -21,7 +21,7 @@
 //! bank in, copies its bytes, and banks the directory bank back in. When the
 //! handler returns, the trampoline banks the whole cartridge out (bit 7 = 1).
 //!
-//! Unlike EasyFlash there is no $DE02 control register and no ROMH — banking is
+//! Unlike EasyFlash there is no $DE02 control register and no ROMH; banking is
 //! done entirely through $DE00. Magic Desk's bit-7 disable is reversible (it just
 //! drives EXROM), so the cartridge can be banked in and out repeatedly.
 //!
@@ -48,8 +48,8 @@ pub const DIRECTORY_BANK: u8 = 0;
 
 /// Fallback trampoline address (the cassette buffer) when the caller does not
 /// supply one. Like EasyFlash, the converter normally picks the address from the
-/// snapshot's stack pointer: $0100 when SP >= 242 (page 1 content — including a
-/// trampoline there — is preserved and restored via PatchMem blocks 1-8),
+/// snapshot's stack pointer: $0100 when SP >= 242 (page 1 content, including a
+/// trampoline there, is preserved and restored via PatchMem blocks 1-8),
 /// otherwise $0334.
 pub const DEFAULT_TRAMPOLINE_ADDR: u16 = 0x0334;
 
@@ -159,7 +159,7 @@ not_done:
     BNE no_carry_src
     INC $A4
 
-    ; Check if we've reached $A000 (bank boundary)
+    ; Check for $A000 (bank boundary)
     LDA $A4
     CMP #$A0
     BCS bank_boundary_reached
@@ -173,14 +173,14 @@ no_carry_dst:
     JMP copy_loop
 
 bank_boundary_reached:
-    ; Increment dest pointer for the last byte we just copied
+    ; Increment dest pointer for the byte just copied
     INC $AE
     BNE bank_boundary_update
     INC $AF
 
 bank_boundary_update:
     ; Update $90/$91 to actual end address ($A3/$A4)
-    ; so the handler knows we stopped at a bank boundary
+    ; so the handler sees the stop at a bank boundary
     LDA $A3
     STA $90
     LDA $A4

@@ -1,6 +1,6 @@
 [package]
 name = "vice-snapshot-to-prg-converter"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2024"
 authors = ["Tommy Olsen"]
 
@@ -22,7 +22,7 @@ path = "src/cli/main.rs"
 [dependencies]
 fltk = { version = "1.5.22", features = ["fltk-bundled"] }
 asm6502 = { git = "https://github.com/tommyo123/asm6502" }
-lzsa-sys = { git = "https://github.com/tommyo123/lzsa-sys" }
+lzan = { git = "https://github.com/tommyo123/lzan" }
 
 [build-dependencies]
 winres = "0.1"

@@ -59,6 +59,9 @@ impl ConvertSnapshotCRT {
 
         // Parse the input: either a VICE VSF snapshot or a self-restoring freezer
         // image (Action Replay etc.), decoded by replaying its own restore stub.
+        let progress = self.config.base_config.progress.clone();
+        progress.step("Reading snapshot...")?;
+
         let input_bytes = fs::read(input_path)
             .map_err(|e| format!("Failed to read input file: {}", e))?;
 
@@ -82,7 +85,6 @@ impl ConvertSnapshotCRT {
         let mut f8_ff_data = [0u8; 8];
         f8_ff_data.copy_from_slice(&snap.mem.ram[0xF8..=0xFF]);
 
-        // Check if we have files to include
         let has_files = self.config.include_dir.is_some() && self.config.patch_load_save;
 
         // Zero out manually specified extra blocks before compression
@@ -123,7 +125,7 @@ impl ConvertSnapshotCRT {
                 Some(trampoline_addr),
             );
 
-            // Patch trampoline code and vectors into RAM BEFORE PatchMem!
+            // Write trampoline code and vectors into RAM before PatchMem runs.
             hook.hook_load_and_save(&mut ram[..])
                 .map_err(|e| format!("Failed to hook LOAD/SAVE: {}", e))?;
 
@@ -132,17 +134,16 @@ impl ConvertSnapshotCRT {
             None
         };
 
-        // Initialize RAM finder AFTER trampoline is written
-        // This ensures FindRam sees the trampoline area as "used" (non-zero bytes)
-        // and won't allocate restore code blocks over it
+        // Initialize RAM finder AFTER trampoline is written, so FindRam sees the
+        // trampoline area as used (non-zero bytes) and does not allocate restore
+        // code blocks over it.
         let mut ram_finder = FindRam::with_extra_blocks(&ram, &self.extra_ram_blocks);
 
-        // Patch memory with restoration code (using PatchMem)
-        // This runs AFTER trampoline is written (if include-dir is set)
+        // Patch memory with restoration code.
+        progress.step("Patching memory...")?;
         let patch_mem = PatchMem::new(&snap, &mut *ram, &mut ram_finder)
             .map_err(|e| format!("Memory patching failed: {}", e))?;
 
-        // Create patched snapshot
         let patched_snap = C64Snapshot {
             cpu: snap.cpu.clone(),
             mem: C64Mem {
@@ -161,23 +162,30 @@ impl ConvertSnapshotCRT {
             .extract_ram(&patched_snap)
             .map_err(|e| format!("Failed to extract components: {}", e))?;
 
+        progress.step("Compressing RAM...")?;
         parser
-            .compress_lzsa(&ram_path, &format!("{}.lzsa", ram_path))
+            .compress_block(&ram_path, &format!("{}.lzsa", ram_path), true)
             .map_err(|e| format!("Failed to compress RAM: {}", e))?;
+        progress.step("Compressing color RAM...")?;
         parser
             .compress_lzsa(&color_path, &format!("{}.lzsa", color_path))
             .map_err(|e| format!("Failed to compress color RAM: {}", e))?;
+        progress.step("Compressing zero page...")?;
         parser
             .compress_lzsa(&zp_path, &format!("{}.lzsa", zp_path))
             .map_err(|e| format!("Failed to compress zero page: {}", e))?;
+        progress.step("Compressing VIC...")?;
         parser
             .compress_lzsa(&vic_path, &format!("{}.lzsa", vic_path))
             .map_err(|e| format!("Failed to compress VIC: {}", e))?;
+        progress.step("Compressing SID...")?;
         parser
             .compress_lzsa(&sid_path, &format!("{}.lzsa", sid_path))
             .map_err(|e| format!("Failed to compress SID: {}", e))?;
 
-        // Read compressed sizes
+        progress.step("Assembling EasyFlash CRT...")?;
+
+        // Read compressed RAM size
         let ram_lzsa = fs::read(format!("{}.lzsa", ram_path))
             .map_err(|e| format!("Failed to read RAM LZSA: {}", e))?;
         let ram_lzsa_size = ram_lzsa.len();
@@ -202,18 +210,17 @@ impl ConvertSnapshotCRT {
         let relocated_binary = crt_asm_temp.generate_relocated_decompressor()?;
         let relocated_size = relocated_binary.len();
 
-        // Generate LOAD/SAVE ROM code if we have files
+        // Generate LOAD/SAVE ROM code when files are embedded.
         let load_save_code = if let Some(ref mut hook) = load_save_hook {
             Some(hook.generate_load_save_rom_code()?)
         } else {
             None
         };
-        // Note: load_save_code_size is NOT used for ROML layout - LOAD/SAVE code is only in ROMH
+        // ROML layout excludes the LOAD/SAVE code; it lives in ROMH only.
         let _load_save_code_size = load_save_code.as_ref().map(|c| c.len()).unwrap_or(0);
 
         // Generate restore code (first pass to get size)
-        // NOTE: load_save_code_size is 0 because LOAD/SAVE code is NOT in ROML
-        // It's only in ROMH @ $A600, matching Kotlin implementation
+        // load_save_code_size is 0: the LOAD/SAVE code sits in ROMH @ $A600, not in ROML.
         let crt_asm = MakeCRTAsm::new(
             &format!("{}.lzsa", color_path),
             &format!("{}.lzsa", vic_path),
@@ -253,9 +260,8 @@ impl ConvertSnapshotCRT {
         let final_restore_code = crt_asm_final.generate_restore_code_binary()?;
         let final_relocated = crt_asm_final.generate_relocated_decompressor()?;
 
-        // Calculate how many banks we need for restore data
-        // NOTE: LOAD/SAVE code is NOT in ROML - it's only in ROMH @ $A600
-        // This matches the Kotlin implementation
+        // Banks needed for the restore data.
+        // The LOAD/SAVE code sits in ROMH @ $A600 and is not counted here.
         let total_restore_data_size =
             final_restore_code.len() + final_relocated.len() + ram_lzsa_size;
         let restore_banks_needed = (total_restore_data_size + BANK_SIZE_8K - 1) / BANK_SIZE_8K;
@@ -289,7 +295,6 @@ impl ConvertSnapshotCRT {
             .unwrap_or(0);
         let total_banks = restore_banks_needed.max(file_banks).max(1);
 
-        // Create CRT builder
         let cartridge_name = self
             .config
             .cartridge_name
@@ -299,12 +304,11 @@ impl ConvertSnapshotCRT {
 
         // Fill bank 0 with restore code
         // ROML layout: [restore code] [relocated decompressor] [RAM.lzsa]
-        // NOTE: LOAD/SAVE code is NOT in ROML - it's only in ROMH @ $A600
         let mut offset = 0;
         crt.fill_bank(0, &final_restore_code, offset)?;
         offset += final_restore_code.len();
 
-        // Add relocated decompressor (no LOAD/SAVE code in ROML!)
+        // Add relocated decompressor
         if offset + final_relocated.len() <= BANK_SIZE_8K {
             crt.fill_bank(0, &final_relocated, offset)?;
             offset += final_relocated.len();
@@ -326,8 +330,8 @@ impl ConvertSnapshotCRT {
         }
 
         // Generate ROMH
-        // NOTE: LOAD/SAVE trampoline is NOT passed here - it's written to RAM at $0334
-        // and gets decompressed back when RAM.lzsa is decompressed
+        // The LOAD/SAVE trampoline is not passed here: it is written into RAM at the
+        // chosen trampoline address and returns when RAM.lzsa is decompressed.
         let romh_generator = MakeROMHAsm::new(
             final_restore_code.len(),
             load_save_code.clone(),
@@ -337,14 +341,16 @@ impl ConvertSnapshotCRT {
         let romh_data = romh_generator.generate_romh()?;
         crt.set_bank_romh(0, &romh_data)?;
 
-        // Write files to banks if we have allocations
         if let Some(ref allocations) = file_allocations {
             let fs_manager = FileSystemManager::new(self.config.include_dir.as_ref().unwrap());
             fs_manager.write_files_to_banks(&mut crt, allocations)?;
         }
 
-        // Write CRT file
         crt.make_crt(output_path)?;
+
+        // Fail if the user cancelled while the output was being assembled. The caller
+        // removes the file that was just written.
+        progress.check()?;
 
         Ok(())
     }

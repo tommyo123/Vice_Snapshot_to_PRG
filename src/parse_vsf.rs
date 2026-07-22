@@ -10,7 +10,7 @@
 use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
-use lzsa_sys::{compress_with_options, Options, Version, Mode, Quality};
+use crate::pack_format;
 use crate::config::Config;
 
 /* ======================= Snapshot structures ======================= */
@@ -145,7 +145,7 @@ impl ParseVSF {
     /// Construct a parser shell for a snapshot obtained from a non-VSF source
     /// (e.g. an Action Replay freeze decoded by [`crate::parse_ar`]). The raw
     /// buffer is left empty; only `extract_ram`/`compress_lzsa` (which use the
-    /// file path for naming and the config for the work dir) are valid here —
+    /// file path for naming and the config for the work dir) are valid here.
     /// `parse_import` must not be called on such an instance.
     pub fn for_external_snapshot(file_path: &str, config: &Config) -> Self {
         Self {
@@ -241,8 +241,7 @@ impl ParseVSF {
         let sid = sid.ok_or_else(|| "SID missing".to_string())?;
 
         // Extract Color RAM from main memory ($D800-$DBFF) instead of VIC module
-        // The VIC module's color RAM is often unreliable, but main RAM $D800-$DBFF
-        // contains the actual color RAM values that were active during snapshot
+        // The VIC module's color RAM is often unreliable; main RAM holds the values active at snapshot time.
         let color_slice = &mem.ram[0xD800..=0xDBFF];
 
         // Validate color RAM data quality (should be 4-bit values in low nibble)
@@ -350,22 +349,54 @@ impl ParseVSF {
         Ok((ram_hi_path, color_path, zp_path, vic_path, sid_path, cia1_path, cia2_path))
     }
 
+    /// Compress a non-RAM block (color, VIC, SID, zero page) with the configured format. These
+    /// blocks decompress to fixed, non-overlapping targets, so no in-place safety gap applies.
     pub fn compress_lzsa(&self, in_path: &str, out_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        self.compress_block(in_path, out_path, false)
+    }
+
+    /// Compress a block with the configured format. When `is_ram_block` is set, the RAM in-place
+    /// safety gap is checked: the packed stream is decompressed forward over itself (source ending
+    /// at $FFFF, output ending at $FFEF), so the format must keep the write head within 16 bytes of
+    /// the read head.
+    pub fn compress_block(
+        &self,
+        in_path: &str,
+        out_path: &str,
+        is_ram_block: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let input_data = fs::read(in_path)?;
+        let format = self.config.pack_format;
 
-        // Configure LZSA1 with raw mode (no frame header)
-        let options = Options {
-            version: Version::V1,
-            mode: Mode::RawForward,
-            quality: Quality::Ratio,
-            min_match_size: 3,
-        };
+        let compressed = pack_format::encode(format, &input_data);
+        if compressed.is_empty() && !input_data.is_empty() {
+            return Err(format!(
+                "{} compression produced no output for {} ({} bytes; the raw-block limit is 64 KB)",
+                format.as_str(),
+                in_path,
+                input_data.len()
+            )
+            .into());
+        }
 
-        let compressed = compress_with_options(&input_data, &options)
-            .map_err(|e| format!("LZSA compression failed: {}", e))?;
+        if is_ram_block {
+            // Output $0200-$FFEF (65008 bytes); packed stream ends at $FFFF -> 16 bytes headroom.
+            const RAM_GAP_AVAILABLE: usize = 0x10000 - 0x0200 - 0xFDF0;
+            let gap = pack_format::max_gap_forward(format, &compressed);
+            if gap > RAM_GAP_AVAILABLE {
+                return Err(format!(
+                    "{} does not compress this snapshot's RAM enough for in-place restore \
+                     (needs {} bytes of headroom, only {} available). Try a stronger format \
+                     such as LZSA1 or LZSA2.",
+                    format.as_str(),
+                    gap,
+                    RAM_GAP_AVAILABLE
+                )
+                .into());
+            }
+        }
 
         fs::write(out_path, &compressed)?;
-
         Ok(())
     }
 }
@@ -530,7 +561,7 @@ fn validate_cpu(_c: &Cpu6510) -> Result<(), String> {
     Ok(())
 }
 
-/* ======================= Restore toolkit (unused but kept for reference) ======================= */
+/* ======================= Restore toolkit ======================= */
 
 pub trait Bus {
     fn write8(&mut self, addr: u16, val: u8);
